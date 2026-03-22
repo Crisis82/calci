@@ -1,0 +1,17 @@
+# Override-ready app config template.
+# Copy to ~/.config/calci/config.toml and tweak as needed.
+
+pager = true
+math = true
+line_numbers = false
+line_highlight = false
+mouse = true
+wrap = true
+smooth_scroll = 3
+center_blocks = true
+link_confirmation = false
+
+[dashboard]
+sort = "last_open"
+fuzzy_mode = "loose"
+show_edited_age = false

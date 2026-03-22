@@ -1,0 +1,13 @@
+# Derived from ../oxocarbon.lua main_colors (base10-style source).
+
+[base10]
+black = "#1b1b1b"
+grey = "#6b6b6b"
+white = "#f2f4f8"
+green = "#29d398"
+cyan = "#3ddbd9"
+blue = "#78a9ff"
+purple = "#b294ff"
+pink = "#b6c2ff"
+red = "#ee5396"
+yellow = "#fab795"

@@ -1,0 +1,30 @@
+# Derived from ../oxocarbon.lua base_30/base_16.
+# Representative Base16 mapping for calci (refined oxocarbon defaults).
+
+[base16]
+base00 = "#1b1b1b"
+base01 = "#242424"
+base02 = "#2e2e2e"
+base03 = "#6b6b6b"
+base04 = "#8a8a8a"
+base05 = "#f2f4f8"
+base06 = "#ffffff"
+base07 = "#08bdba"
+base08 = "#ee5396"
+base09 = "#78a9ff"
+base0a = "#c7d1ff"
+base0b = "#3ddbd9"
+base0c = "#82cfff"
+base0d = "#29D398"
+base0e = "#be95ff"
+base0f = "#b6c2ff"
+
+# Optional explicit overrides:
+# [code]
+# purple = "#be95ff"
+# pink = "#c7d1ff"
+# blue = "#78a9ff"
+# cyan = "#82cfff"
+# green = "#29D398"
+# red = "#ee5396"
+# orange = "#b6c2ff"

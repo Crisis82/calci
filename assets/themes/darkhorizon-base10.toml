@@ -1,0 +1,13 @@
+# Derived from ../darkhorizon.lua main_colors (base10-style source).
+
+[base10]
+black = "#1d1c1c"
+grey = "#525252"
+white = "#dddddd"
+green = "#29d398"
+cyan = "#59e1e3"
+blue = "#26bbd9"
+purple = "#b877db"
+pink = "#ee64ac"
+red = "#e95678"
+yellow = "#fab795"
