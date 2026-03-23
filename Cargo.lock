@@ -198,6 +198,7 @@ dependencies = [
 [[package]]
 name = "calcifer"
 version = "0.1.0"
+source = "git+https://github.com/Crisis82/calcifer#97d839965342754cbae5d35a523c2162029fdd87"
 dependencies = [
  "clap",
  "pulldown-cmark 0.12.2",
