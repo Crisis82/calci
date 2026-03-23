@@ -8,7 +8,6 @@ Rust TUI markdown pager inspired by Glow, with integrated math rendering via `ca
 - Smooth scrolling (`j/k`, arrows, page up/down, mouse wheel)
 - Search in text (`/`, `n`, `N`) — skips code blocks and math/ascii sections
 - Open source file in editor (`e`) and reload (`r`)
-- Theme support (`--theme oxocarbon|darkhorizon|dark|light|dracula|solarized-dark`)
 - Configurable behavior via `config.toml` and colors via `colors.toml`
 - Jekyll-like front matter header (`--- title: ... ---`) with sticky top title
 - Markdown + code block rendering with syntax highlighting
@@ -20,8 +19,9 @@ Rust TUI markdown pager inspired by Glow, with integrated math rendering via `ca
 - Search highlights matched words; current active match uses a distinct color
 - Optional current-line highlight via config (`line_highlight = false` by default)
 - Clipboard copy uses `wl-copy`
-- Shell completion generation (`--completion bash|zsh|fish`)
+- Shell completion generation (`-c|--completion bash|zsh|fish`)
 - Glow-like interactive dashboard when launched with no file argument
+- Incremental dashboard indexing with cached file list for faster startup in large trees
 - Markdown formatting support: headings, bold, italic, strikethrough, links, block quotes, lists, code fences, tables
 
 ## Build
@@ -40,42 +40,38 @@ cargo build --release
 cat README.md | ./target/release/calci
 
 # Non-pager mode (render to stdout)
-./target/release/calci --no-pager README.md
-
-# Theme and line numbers
-./target/release/calci --theme oxocarbon --line-numbers README.md
-
-# Custom config/colors path
-./target/release/calci --config ./config.toml --colors ./colors.toml README.md
+./target/release/calci -p README.md
 
 # Generate shell completion
-./target/release/calci --completion zsh > _calci
+./target/release/calci -c zsh > _calci
 ```
+
+Positional tab completion suggests only Markdown files (`.md`, `.markdown`) and relative directories that contain Markdown files.
 
 ### Config files
 
 Defaults:
 
-- `~/.config/calci/config.toml`
-- `~/.config/calci/colors.toml`
+- app config is read from `~/.config/calci/config.toml` when present
+- colors are read from `~/.config/calci/colors.toml` when present
 - dashboard open history: `~/.config/calci/dashboard_state.toml`
+- dashboard file cache: `~/.config/calci/dashboard_cache.toml`
 
 Project-local examples are included:
 
-- `config.toml`
-- `colors.toml`
-- override-ready files:
-  - `overrides/config/default.toml`
-  - `overrides/colorschemes/oxocarbon.toml`
-  - `overrides/colorschemes/darkhorizon.toml`
-  - `overrides/colorschemes/oxocarbon-base10.toml`
-  - `overrides/colorschemes/darkhorizon-base10.toml`
+- `assets/configs.toml`
+- themes:
+  - `assets/themes/oxocarbon.toml`
+  - `assets/themes/darkhorizon.toml`
+  - `assets/themes/oxocarbon-base10.toml`
+  - `assets/themes/darkhorizon-base10.toml`
 
 `config.toml` supports:
 - `dashboard_sort = "last_open"` (default) or `"last_edited"`
 - `dashboard_fuzzy_mode = "loose"` (default) or `"strict"`
 - `dashboard_show_edited_age = false` (default)
 - `mouse = true` enables dashboard click + wheel gestures (up/down: files, left/right: pages)
+- dashboard hotkey `s` toggles sort mode (`last_open`/`last_edited`) at runtime
 
 You can also use nested dashboard keys:
 - `[dashboard] sort = "last_open" | "last_edited"`
@@ -126,10 +122,10 @@ When a `colors.toml` is provided, calci derives the whole UI palette from it (pa
 To test a maintained scheme file directly:
 
 ```bash
-./target/release/calci --colors overrides/colorschemes/oxocarbon.toml README.md
-./target/release/calci --colors overrides/colorschemes/darkhorizon.toml README.md
-./target/release/calci --colors overrides/colorschemes/oxocarbon-base10.toml README.md
-./target/release/calci --colors overrides/colorschemes/darkhorizon-base10.toml README.md
+./target/release/calci --colors assets/themes/oxocarbon.toml README.md
+./target/release/calci --colors assets/themes/darkhorizon.toml README.md
+./target/release/calci --colors assets/themes/oxocarbon-base10.toml README.md
+./target/release/calci --colors assets/themes/darkhorizon-base10.toml README.md
 ```
 
 ## Notes
@@ -137,7 +133,8 @@ To test a maintained scheme file directly:
 - Search ignores code lines by design.
 - `array` follows LaTeX semantics (no implicit delimiters).
 - For `e` to work, open from a file path (not stdin).
-- Default theme is `oxocarbon`.
+- If `~/.config/calci/colors.toml` exists, it is used automatically.
+- If no colors file exists, calci uses built-in defaults.
 - Inline code renders highlighted text without literal backtick glyphs.
 - Dashboard and status bar are always enabled.
-- Theme selection is CLI-only (`--theme`), while `colors.toml` controls color overrides.
+- `colors.toml` controls color overrides.

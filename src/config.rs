@@ -477,11 +477,8 @@ impl LoadedConfig {
         })
     }
 
-    pub fn build_theme(&self, cli_theme: Option<&str>) -> AppTheme {
-        let name = cli_theme
-            .map(ThemeName::parse)
-            .unwrap_or(ThemeName::Oxocarbon);
-        let mut theme = AppTheme::from_name(name);
+    pub fn build_theme(&self) -> AppTheme {
+        let mut theme = AppTheme::from_name(ThemeName::Oxocarbon);
         theme.apply_overrides(&self.colors);
         theme
     }

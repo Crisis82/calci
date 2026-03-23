@@ -3,12 +3,12 @@ mod config;
 mod renderer;
 mod theme;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use clap::{CommandFactory, Parser, ValueEnum, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use crossterm::event;
 use crossterm::execute;
 use crossterm::terminal::{
@@ -30,6 +30,9 @@ use theme::AppTheme;
 const DASHBOARD_BODY_PAD_X: usize = 2;
 const DASHBOARD_BODY_PAD_Y: usize = 1;
 const DASHBOARD_META_PAD_X: usize = 2;
+const DASHBOARD_SCAN_BATCH_DIRS: usize = 32;
+const DASHBOARD_SCAN_BATCH_FILES: usize = 512;
+const DASHBOARD_MODIFIED_BATCH: usize = 96;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CompletionShell {
@@ -42,55 +45,44 @@ enum CompletionShell {
 #[command(
     name = "calci",
     version,
-    about = "TUI markdown pager with search, syntax highlighting, links, and calcifer rendering"
+    about = "TUI markdown pager with search, syntax highlighting, links, and calcifer rendering",
+    disable_version_flag = true
 )]
 struct Cli {
     /// Markdown file path. Uses dashboard if omitted.
     #[arg(value_hint = ValueHint::FilePath)]
     file: Option<PathBuf>,
 
-    /// Theme: oxocarbon, darkhorizon, dark, light, dracula, solarized-dark
-    #[arg(long)]
-    theme: Option<String>,
-
-    /// Show line numbers
-    #[arg(short = 'n', long)]
-    line_numbers: bool,
-
     /// Disable pager UI (prints rendered plain text)
-    #[arg(long)]
-    no_pager: bool,
-
-    /// Optional config path (default: ~/.config/calci/config.toml)
-    #[arg(long, value_hint = ValueHint::FilePath)]
-    config: Option<PathBuf>,
-
-    /// Optional colors path (default: ~/.config/calci/colors.toml)
-    #[arg(long, value_hint = ValueHint::FilePath)]
-    colors: Option<PathBuf>,
+    #[arg(short = 'p', long = "plain")]
+    plain: bool,
 
     /// Print shell completion script (bash|zsh|fish)
-    #[arg(long, value_name = "SHELL")]
+    #[arg(short = 'c', long, value_name = "SHELL")]
     completion: Option<CompletionShell>,
+
+    /// Print version
+    #[arg(short = 'v', long = "version")]
+    version: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if let Some(shell) = cli.completion {
         print_completion(shell);
         return Ok(());
     }
-    let loaded = LoadedConfig::load(cli.config.as_deref(), cli.colors.as_deref())?;
-    let chosen_theme = loaded.build_theme(cli.theme.as_deref());
+    let loaded = LoadedConfig::load(None, None)?;
+    let chosen_theme = loaded.build_theme();
     let config = AppConfig {
         input_path: cli.file.clone(),
-        line_numbers: cli.line_numbers || loaded.app.line_numbers,
+        line_numbers: loaded.app.line_numbers,
         line_highlight: loaded.app.line_highlight,
-        start_in_pager: if cli.no_pager {
-            false
-        } else {
-            loaded.app.pager
-        },
+        start_in_pager: if cli.plain { false } else { loaded.app.pager },
         mouse: loaded.app.mouse,
         wrap: loaded.app.wrap,
         smooth_scroll: loaded.app.smooth_scroll,
@@ -254,13 +246,211 @@ fn run_pager(
 }
 
 fn print_completion(shell: CompletionShell) {
-    let mut cmd = Cli::command();
-    clap_complete::generate(
-        shell.to_clap_shell(),
-        &mut cmd,
-        "calci",
-        &mut std::io::stdout(),
-    );
+    match shell {
+        CompletionShell::Bash => {
+            print!("{}", bash_completion_script());
+        }
+        CompletionShell::Zsh => {
+            print!("{}", zsh_completion_script());
+        }
+        CompletionShell::Fish => {
+            print!("{}", fish_completion_script());
+        }
+    }
+}
+
+fn bash_completion_script() -> &'static str {
+    r#"_calci__md_entries() {
+    local base
+    base="${1:-.}"
+    [ -d "$base" ] || return 0
+    find "$base" -mindepth 1 -maxdepth 1 \
+        \( -type f \( -iname '*.md' -o -iname '*.markdown' \) -o -type d \) \
+        -printf '%P\n' 2>/dev/null
+}
+
+_calci__md_paths() {
+    local cur dir_part prefix search_base
+    cur="$1"
+    dir_part="${cur%/*}"
+    if [ "$dir_part" = "$cur" ]; then
+        dir_part=""
+        prefix=""
+        search_base="."
+    else
+        prefix="$dir_part/"
+        search_base="$dir_part"
+    fi
+    _calci__md_entries "$search_base" | while IFS= read -r item; do
+        [ -z "$item" ] && continue
+        if [ -d "${search_base%/}/$item" ]; then
+            if find "${search_base%/}/$item" -type f \
+                \( -iname '*.md' -o -iname '*.markdown' \) \
+                -print -quit 2>/dev/null | grep -q .; then
+                printf '%s%s/\n' "$prefix" "$item"
+            fi
+        else
+            printf '%s%s\n' "$prefix" "$item"
+        fi
+    done
+}
+
+_calci() {
+    local i cur prev opts cmd
+    COMPREPLY=()
+    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+        cur="$2"
+    else
+        cur="${COMP_WORDS[COMP_CWORD]}"
+    fi
+    prev="$3"
+    cmd=""
+    opts="-h -v -p -c --help --version --plain --completion"
+
+    for i in "${COMP_WORDS[@]:0:COMP_CWORD}"; do
+        case "${cmd},${i}" in
+            ",$1")
+                cmd="calci"
+                ;;
+            *)
+                ;;
+        esac
+    done
+
+    case "${cmd}" in
+        calci)
+            if [[ ${cur} == -* ]]; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --completion|-c)
+                    COMPREPLY=($(compgen -W "bash zsh fish" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    ;;
+            esac
+
+            local oldifs
+            if [ -n "${IFS+x}" ]; then
+                oldifs="$IFS"
+            fi
+            IFS=$'\n'
+            COMPREPLY=($(compgen -W "$(_calci__md_paths "${cur}")" -- "${cur}"))
+            if [ -n "${oldifs+x}" ]; then
+                IFS="$oldifs"
+            fi
+            if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                compopt -o filenames
+            fi
+            return 0
+            ;;
+    esac
+}
+
+if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
+    complete -F _calci -o nosort calci
+else
+    complete -F _calci calci
+fi
+"#
+}
+
+fn zsh_completion_script() -> &'static str {
+    r#"#compdef calci
+
+_calci_md_paths() {
+  local -a files dirs
+  local cur_dir item
+  cur_dir="${PREFIX%/*}"
+  if [[ "$PREFIX" == */* ]]; then
+    cur_dir="${PREFIX%/*}"
+  else
+    cur_dir="."
+  fi
+  local base_prefix=""
+  if [[ "$PREFIX" == */* ]]; then
+    base_prefix="${PREFIX%/*}/"
+  fi
+  if [[ -d "$cur_dir" ]]; then
+    for item in "$cur_dir"/*(N); do
+      if [[ -f "$item" ]]; then
+        if [[ "$item" == *.md || "$item" == *.markdown || "$item" == *.MD || "$item" == *.MARKDOWN ]]; then
+          files+=("${base_prefix}${item:t}")
+        fi
+      elif [[ -d "$item" ]]; then
+        if [[ -n "$(find "$item" -type f \( -iname '*.md' -o -iname '*.markdown' \) -print -quit 2>/dev/null)" ]]; then
+          dirs+=("${base_prefix}${item:t}/")
+        fi
+      fi
+    done
+  fi
+  (( ${#dirs[@]} )) && compadd -Q -S '' -- "${dirs[@]}"
+  (( ${#files[@]} )) && compadd -Q -- "${files[@]}"
+  (( ${#dirs[@]} + ${#files[@]} > 0 ))
+}
+
+_calci() {
+  _arguments -s -S \
+    '-h[Print help]' \
+    '--help[Print help]' \
+    '-v[Print version]' \
+    '--version[Print version]' \
+    '-p[Disable pager UI (prints rendered plain text)]' \
+    '--plain[Disable pager UI (prints rendered plain text)]' \
+    '-c[Print shell completion script (bash|zsh|fish)]:shell:(bash zsh fish)' \
+    '--completion[Print shell completion script (bash|zsh|fish)]:shell:(bash zsh fish)' \
+    '::file: _calci_md_paths' && return 0
+
+  case "$state" in
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if [[ "$funcstack[1]" == "_calci" ]]; then
+  _calci "$@"
+else
+  compdef _calci calci
+fi
+"#
+}
+
+fn fish_completion_script() -> &'static str {
+    r#"function __calci_md_paths
+    set -l token (commandline -ct)
+    set -l dir .
+    set -l prefix ""
+    if string match -q "*/*" -- $token
+        set dir (string replace -r '/[^/]*$' '' -- $token)
+        if test -z "$dir"
+            set dir "."
+        end
+        set prefix "$dir/"
+    end
+    if test -d "$dir"
+        for p in $dir/*
+            if test -f "$p"
+                if string match -qr '\.(md|markdown)$' -- (string lower -- "$p")
+                    echo "$prefix"(basename "$p")
+                end
+            else if test -d "$p"
+                if test -n (find "$p" -type f \( -iname '*.md' -o -iname '*.markdown' \) -print -quit 2>/dev/null)
+                    echo "$prefix"(basename "$p")/
+                end
+            end
+        end
+    end
+end
+
+complete -c calci -s c -l completion -d 'Print shell completion script (bash|zsh|fish)' -r -f -a "bash zsh fish"
+complete -c calci -s p -l plain -d 'Disable pager UI (prints rendered plain text)'
+complete -c calci -s h -l help -d 'Print help'
+complete -c calci -s v -l version -d 'Print version'
+complete -c calci -f -a '(__calci_md_paths)' -k
+"#
 }
 
 fn run_dashboard(
@@ -271,46 +461,19 @@ fn run_dashboard(
     mouse_enabled: bool,
     config_dir: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
-    let files = collect_markdown_files(".")?;
-    if files.is_empty() {
-        return Err(anyhow::anyhow!(
-            "no markdown files found in current directory"
-        ));
-    }
-
     let state_path = dashboard_state_path(config_dir);
+    let cache_path = dashboard_cache_path(config_dir);
     let mut dashboard_state = DashboardState::load(&state_path)?;
-
-    let mut entries: Vec<DashboardEntry> = files
-        .into_iter()
-        .map(|path| {
-            let relative = path
-                .strip_prefix(".")
-                .unwrap_or(path.as_path())
-                .display()
-                .to_string();
-            let display = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| relative.clone());
-            let modified = std::fs::metadata(&path)
-                .ok()
-                .and_then(|m| m.modified().ok());
-            let modified_unix = modified.and_then(unix_secs);
-            let last_open_unix = dashboard_state.last_open_unix_for(&path);
-            let lower_search = format!("{} {}", relative.to_lowercase(), display.to_lowercase());
-            DashboardEntry {
-                path,
-                relative,
-                display,
-                modified,
-                modified_unix,
-                last_open_unix,
-                lower_search,
-            }
-        })
-        .collect();
+    let mut entries = DashboardCache::load(&cache_path)?.to_entries(&dashboard_state);
+    let mut known_paths = entries
+        .iter()
+        .map(|e| dashboard_path_key(&e.path))
+        .collect::<HashSet<_>>();
+    let mut scanner = DashboardScanner::new(Path::new("."));
+    let mut modified_checked: HashSet<String> = HashSet::new();
+    let mut modified_cursor = 0usize;
+    let mut sort_mode = sort_mode;
+    let mut cache_dirty = false;
     sort_dashboard_entries(&mut entries, sort_mode);
 
     enable_raw_mode().context("enable raw mode for dashboard")?;
@@ -385,6 +548,20 @@ fn run_dashboard(
                         as usize,
                 )
             };
+            let meta_text = if search_mode || !search_query.is_empty() {
+                meta_text
+            } else if scanner.is_done() {
+                meta_text
+            } else {
+                compose_dashboard_meta(
+                    &format!("{} documents (scanning…)", entries.len()),
+                    &format!("sort: {}", dashboard_sort_label(sort_mode)),
+                    chunks[1]
+                        .width
+                        .saturating_sub((2 + DASHBOARD_META_PAD_X * 2) as u16)
+                        as usize,
+                )
+            };
             f.render_widget(
                 Paragraph::new(vec![Line::from(vec![
                     Span::raw(" ".repeat(2 + DASHBOARD_META_PAD_X)),
@@ -431,8 +608,8 @@ fn run_dashboard(
                     };
                     let right_text = if show_edited_age {
                         let age = entry
-                            .modified
-                            .map(format_relative_time_value_only)
+                            .modified_unix
+                            .map(format_relative_time_value_only_unix)
                             .unwrap_or_else(|| "?".to_string());
                         format!("({age})")
                     } else {
@@ -530,6 +707,7 @@ fn run_dashboard(
                     dashboard_kb_line(theme, "h, left arrow", "prev page"),
                     dashboard_kb_line(theme, "l, right arrow", "next page"),
                     dashboard_kb_line(theme, "g/G", "top/bottom"),
+                    dashboard_kb_line(theme, "s", "toggle sort mode"),
                     dashboard_kb_line(theme, "Enter", "open file"),
                     dashboard_kb_line(theme, "q", "quit"),
                     dashboard_kb_line(theme, "?", "toggle help"),
@@ -617,6 +795,11 @@ fn run_dashboard(
                                 selected = filtered.len().saturating_sub(1);
                             }
                         }
+                        event::KeyCode::Char('s') if !search_mode => {
+                            sort_mode = toggle_dashboard_sort(sort_mode);
+                            sort_dashboard_entries(&mut entries, sort_mode);
+                            selected = 0;
+                        }
                         event::KeyCode::Enter => {
                             if !filtered.is_empty() {
                                 if let Some(path) =
@@ -693,6 +876,40 @@ fn run_dashboard(
                 _ => {}
             }
         }
+
+        let mut entries_changed = false;
+        let discovered = scanner.scan_batch(DASHBOARD_SCAN_BATCH_DIRS, DASHBOARD_SCAN_BATCH_FILES);
+        for path in discovered {
+            let key = dashboard_path_key(&path);
+            if !known_paths.insert(key) {
+                continue;
+            }
+            entries.push(dashboard_entry_from_path(path, &dashboard_state, None));
+            entries_changed = true;
+            cache_dirty = true;
+        }
+
+        if show_edited_age || sort_mode == DashboardSort::LastEdited {
+            if hydrate_dashboard_modified_batch(
+                &mut entries,
+                &mut modified_checked,
+                &mut modified_cursor,
+                DASHBOARD_MODIFIED_BATCH,
+            ) {
+                entries_changed = true;
+                cache_dirty = true;
+            }
+        }
+
+        if entries_changed {
+            sort_dashboard_entries(&mut entries, sort_mode);
+        }
+
+        if scanner.is_done() && entries.is_empty() {
+            break Err(anyhow::anyhow!(
+                "no markdown files found in current directory"
+            ));
+        }
     };
 
     disable_raw_mode().ok();
@@ -707,6 +924,9 @@ fn run_dashboard(
     terminal.show_cursor().ok();
 
     run_result?;
+    if cache_dirty {
+        DashboardCache::from_entries(&entries).save(&cache_path)?;
+    }
     Ok(chosen)
 }
 
@@ -719,6 +939,128 @@ struct DashboardEntry {
     modified_unix: Option<u64>,
     last_open_unix: Option<u64>,
     lower_search: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct DashboardCacheEntry {
+    path: String,
+    #[serde(default)]
+    modified_unix: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct DashboardCache {
+    #[serde(default)]
+    entries: Vec<DashboardCacheEntry>,
+}
+
+impl DashboardCache {
+    fn load(path: &Path) -> anyhow::Result<Self> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let content =
+            std::fs::read_to_string(path).with_context(|| format!("read '{}'", path.display()))?;
+        toml::from_str::<Self>(&content).with_context(|| format!("parse '{}'", path.display()))
+    }
+
+    fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create '{}'", parent.display()))?;
+        }
+        let content = toml::to_string(self).context("serialize dashboard cache")?;
+        std::fs::write(path, content).with_context(|| format!("write '{}'", path.display()))
+    }
+
+    fn from_entries(entries: &[DashboardEntry]) -> Self {
+        let mut seen = HashSet::new();
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let key = dashboard_path_key(&entry.path);
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            out.push(DashboardCacheEntry {
+                path: key,
+                modified_unix: entry.modified_unix,
+            });
+        }
+        Self { entries: out }
+    }
+
+    fn to_entries(&self, state: &DashboardState) -> Vec<DashboardEntry> {
+        self.entries
+            .iter()
+            .filter_map(|c| {
+                let path = PathBuf::from(&c.path);
+                path.exists()
+                    .then(|| dashboard_entry_from_path(path, state, c.modified_unix))
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug)]
+struct DashboardScanner {
+    pending_dirs: VecDeque<PathBuf>,
+    done: bool,
+}
+
+impl DashboardScanner {
+    fn new(root: &Path) -> Self {
+        let mut pending_dirs = VecDeque::new();
+        pending_dirs.push_back(root.to_path_buf());
+        Self {
+            pending_dirs,
+            done: false,
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
+    }
+
+    fn scan_batch(&mut self, max_dirs: usize, max_files: usize) -> Vec<PathBuf> {
+        if self.done {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        let max_dirs = max_dirs.max(1);
+        let max_files = max_files.max(1);
+        for _ in 0..max_dirs {
+            let Some(dir) = self.pending_dirs.pop_front() else {
+                self.done = true;
+                break;
+            };
+            let Ok(read_dir) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                if file_type.is_dir() {
+                    if should_skip_dashboard_dir(&path) {
+                        continue;
+                    }
+                    self.pending_dirs.push_back(path);
+                    continue;
+                }
+                if file_type.is_file() && is_markdown_path(&path) {
+                    found.push(path);
+                }
+            }
+            if found.len() >= max_files {
+                break;
+            }
+        }
+        if self.pending_dirs.is_empty() {
+            self.done = true;
+        }
+        found
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -753,6 +1095,81 @@ impl DashboardState {
 
     fn last_open_unix_for(&self, path: &Path) -> Option<u64> {
         self.last_open_unix.get(&dashboard_path_key(path)).copied()
+    }
+}
+
+fn dashboard_entry_from_path(
+    path: PathBuf,
+    dashboard_state: &DashboardState,
+    modified_unix: Option<u64>,
+) -> DashboardEntry {
+    let relative = path
+        .strip_prefix(".")
+        .unwrap_or(path.as_path())
+        .display()
+        .to_string();
+    let display = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| relative.clone());
+    let last_open_unix = dashboard_state.last_open_unix_for(&path);
+    let lower_search = format!("{} {}", relative.to_lowercase(), display.to_lowercase());
+    DashboardEntry {
+        path,
+        relative,
+        display,
+        modified: modified_unix.and_then(system_time_from_unix),
+        modified_unix,
+        last_open_unix,
+        lower_search,
+    }
+}
+
+fn hydrate_dashboard_modified_batch(
+    entries: &mut [DashboardEntry],
+    checked: &mut HashSet<String>,
+    cursor: &mut usize,
+    batch_size: usize,
+) -> bool {
+    if entries.is_empty() {
+        *cursor = 0;
+        return false;
+    }
+    if *cursor >= entries.len() {
+        *cursor = 0;
+    }
+    let mut changed = false;
+    let mut processed = 0usize;
+    let mut visited = 0usize;
+    let batch_size = batch_size.max(1).min(entries.len());
+    while processed < batch_size && visited < entries.len() {
+        let idx = *cursor;
+        *cursor = (*cursor + 1) % entries.len();
+        visited += 1;
+        let key = dashboard_path_key(&entries[idx].path);
+        if checked.contains(&key) {
+            continue;
+        }
+        checked.insert(key);
+        let new_modified = std::fs::metadata(&entries[idx].path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(unix_secs);
+        if entries[idx].modified_unix != new_modified {
+            entries[idx].modified_unix = new_modified;
+            entries[idx].modified = new_modified.and_then(system_time_from_unix);
+            changed = true;
+        }
+        processed += 1;
+    }
+    changed
+}
+
+fn toggle_dashboard_sort(mode: DashboardSort) -> DashboardSort {
+    match mode {
+        DashboardSort::LastOpen => DashboardSort::LastEdited,
+        DashboardSort::LastEdited => DashboardSort::LastOpen,
     }
 }
 
@@ -851,6 +1268,39 @@ fn dashboard_fuzzy_score(haystack: &str, needle: &str, mode: DashboardFuzzyMode)
         DashboardFuzzyMode::Strict => strict_fuzzy_score(haystack, needle),
         DashboardFuzzyMode::Loose => fuzzy_score(haystack, needle),
     }
+}
+
+fn should_skip_dashboard_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if name.starts_with('.') {
+        return true;
+    }
+    matches!(
+        name,
+        "target"
+            | "node_modules"
+            | "dist"
+            | "build"
+            | "vendor"
+            | "venv"
+            | ".venv"
+            | "__pycache__"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".idea"
+            | ".vscode"
+            | ".direnv"
+            | ".cache"
+    )
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+        .unwrap_or(false)
 }
 
 fn sort_dashboard_entries(entries: &mut [DashboardEntry], sort_mode: DashboardSort) {
@@ -1057,15 +1507,28 @@ fn dashboard_state_path(config_dir: &Path) -> PathBuf {
     config_dir.join("dashboard_state.toml")
 }
 
+fn dashboard_cache_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("dashboard_cache.toml")
+}
+
 fn dashboard_path_key(path: &Path) -> String {
     let s = path.to_string_lossy();
     s.strip_prefix("./").unwrap_or(s.as_ref()).to_string()
 }
 
+fn format_relative_time_value_only_unix(unix_ts: u64) -> String {
+    if let Some(ts) = system_time_from_unix(unix_ts) {
+        return format_relative_time_value_only(ts);
+    }
+    "?".to_string()
+}
+
 fn unix_secs(ts: SystemTime) -> Option<u64> {
-    ts.duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_secs())
+    ts.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
+fn system_time_from_unix(unix_ts: u64) -> Option<SystemTime> {
+    UNIX_EPOCH.checked_add(Duration::from_secs(unix_ts))
 }
 
 fn now_unix_secs() -> u64 {
@@ -1294,36 +1757,6 @@ fn ansi_bg_code(c: Color) -> Option<String> {
     }
 }
 
-fn collect_markdown_files(root: &str) -> anyhow::Result<Vec<PathBuf>> {
-    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n == ".git" || n == "target")
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-                walk(&path, out)?;
-                continue;
-            }
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown") {
-                    out.push(path);
-                }
-            }
-        }
-        Ok(())
-    }
-    let mut out = Vec::new();
-    walk(std::path::Path::new(root), &mut out)?;
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1340,21 +1773,13 @@ mod tests {
 
     #[test]
     fn completion_generation_runs() {
-        let mut cmd = Cli::command();
-        let mut out = Vec::<u8>::new();
-        clap_complete::generate(
-            CompletionShell::Bash.to_clap_shell(),
-            &mut cmd,
-            "calci",
-            &mut out,
-        );
-        let text = String::from_utf8(out).expect("utf8");
-        assert!(text.contains("calci"));
-    }
-
-    #[test]
-    fn markdown_collection_runs() {
-        let _ = collect_markdown_files(".").expect("collect");
+        assert!(bash_completion_script().contains("_calci"));
+        assert!(zsh_completion_script().contains("#compdef calci"));
+        assert!(fish_completion_script().contains("complete -c calci"));
+        assert!(bash_completion_script().contains("opts=\"-h -v -p -c"));
+        assert!(zsh_completion_script().contains("-p[Disable pager UI"));
+        assert!(zsh_completion_script().contains("compadd -Q -S '' --"));
+        assert!(fish_completion_script().contains("complete -c calci -s p -l plain"));
     }
 
     #[test]
@@ -1578,6 +2003,67 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_sort_toggle_switches_modes() {
+        assert_eq!(
+            toggle_dashboard_sort(DashboardSort::LastOpen),
+            DashboardSort::LastEdited
+        );
+        assert_eq!(
+            toggle_dashboard_sort(DashboardSort::LastEdited),
+            DashboardSort::LastOpen
+        );
+    }
+
+    #[test]
+    fn hidden_and_common_dirs_are_skipped() {
+        assert!(should_skip_dashboard_dir(Path::new("./.git")));
+        assert!(should_skip_dashboard_dir(Path::new("./target")));
+        assert!(should_skip_dashboard_dir(Path::new("./node_modules")));
+        assert!(!should_skip_dashboard_dir(Path::new("./docs")));
+    }
+
+    #[test]
+    fn cache_roundtrip_preserves_path_and_modified() {
+        let d = tempdir().expect("tempdir");
+        let cache_path = d.path().join("dashboard_cache.toml");
+        let cache = DashboardCache {
+            entries: vec![DashboardCacheEntry {
+                path: "docs/a.md".to_string(),
+                modified_unix: Some(42),
+            }],
+        };
+        cache.save(&cache_path).expect("save cache");
+        let loaded = DashboardCache::load(&cache_path).expect("load cache");
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.entries[0].path, "docs/a.md");
+        assert_eq!(loaded.entries[0].modified_unix, Some(42));
+    }
+
+    #[test]
+    fn scanner_skips_hidden_and_library_dirs() {
+        let d = tempdir().expect("tempdir");
+        let root = d.path();
+        std::fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+        std::fs::create_dir_all(root.join(".git")).expect("mkdir .git");
+        std::fs::create_dir_all(root.join("target")).expect("mkdir target");
+        std::fs::write(root.join("docs").join("ok.md"), "# ok").expect("write docs md");
+        std::fs::write(root.join(".git").join("skip.md"), "# skip").expect("write git md");
+        std::fs::write(root.join("target").join("skip.md"), "# skip").expect("write target md");
+
+        let mut scanner = DashboardScanner::new(root);
+        let mut found = Vec::new();
+        while !scanner.is_done() {
+            found.extend(scanner.scan_batch(16, 128));
+        }
+        let names = found
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"ok.md"));
+        assert!(!names.contains(&"skip.md"));
+    }
+
+    #[test]
     fn dashboard_help_center_layout_snapshot() {
         let theme = AppTheme::from_name(crate::theme::ThemeName::Oxocarbon);
         let rows = vec![dashboard_kb_line(&theme, "q", "quit")];
@@ -1664,15 +2150,5 @@ mod tests {
         assert_eq!(selected, 11);
         selected = selected.saturating_sub(per_page);
         assert_eq!(selected, 6);
-    }
-}
-
-impl CompletionShell {
-    pub fn to_clap_shell(self) -> clap_complete::Shell {
-        match self {
-            CompletionShell::Bash => clap_complete::Shell::Bash,
-            CompletionShell::Zsh => clap_complete::Shell::Zsh,
-            CompletionShell::Fish => clap_complete::Shell::Fish,
-        }
     }
 }

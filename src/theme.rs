@@ -3,6 +3,7 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::config::ColorsFile;
 
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub enum ThemeName {
     Oxocarbon,
     DarkHorizon,
@@ -10,20 +11,6 @@ pub enum ThemeName {
     Light,
     Dracula,
     SolarizedDark,
-}
-
-impl ThemeName {
-    pub fn parse(name: &str) -> Self {
-        match name.to_ascii_lowercase().as_str() {
-            "oxocarbon" | "oxo-carbon" => Self::Oxocarbon,
-            "darkhorizon" | "dark-horizon" => Self::DarkHorizon,
-            "light" => Self::Light,
-            "dracula" => Self::Dracula,
-            "solarized" | "solarized-dark" => Self::SolarizedDark,
-            "dark" => Self::Dark,
-            _ => Self::Oxocarbon,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
