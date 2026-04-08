@@ -1,6 +1,6 @@
 [package]
 name = "calci"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A TUI markdown rendered with math support"
 license = "MIT"
@@ -11,8 +11,8 @@ atty = "0.2.14"
 base64 = "0.22.1"
 clap = { version = "4.6.0", features = ["derive"] }
 crossterm = "0.29.0"
-calcifer = { path = "../calcifer" }
-# calcifer = { git = "https://github.com/Crisis82/calcifer" }
+# calcifer = { path = "../calcifer" }
+calcifer = { git = "https://github.com/Crisis82/calcifer" }
 image = { version = "0.25.8", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "pnm"] }
 pulldown-cmark = "0.13.1"
 ratatui = "0.30.0"

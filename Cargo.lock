@@ -200,7 +200,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "calci"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "atty",
@@ -226,6 +226,7 @@ dependencies = [
 [[package]]
 name = "calcifer"
 version = "0.2.0"
+source = "git+https://github.com/Crisis82/calcifer#4a4b445178681525b92014ee3d8a5c5dc3f4c4f5"
 dependencies = [
  "clap",
  "pulldown-cmark 0.12.2",
