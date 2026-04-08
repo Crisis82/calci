@@ -15,6 +15,7 @@ use syntect::util::LinesWithEndings;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::AppTheme;
+use calcifer::math::ast::{MathNode, Parser as MathAstParser};
 
 const BLOCK_TITLE_MARKER: &str = "__calci_block_title__:";
 const BLOCK_PAD_X: usize = 2;
@@ -27,6 +28,9 @@ pub enum LineKind {
     Normal,
     Heading,
     Code,
+    Ascii,
+    Math,
+    Image,
     Table,
     Quote,
 }
@@ -38,6 +42,7 @@ pub struct RenderLine {
     pub link_url: Option<String>,
     pub link_ranges: Vec<LinkRange>,
     pub code_block_index: Option<usize>,
+    pub image_index: Option<usize>,
     pub heading_level: Option<u8>,
 }
 
@@ -53,7 +58,16 @@ pub struct RenderDoc {
     pub front_matter: Option<FrontMatter>,
     pub lines: Vec<RenderLine>,
     pub code_blocks: Vec<String>,
+    pub images: Vec<RenderImage>,
     pub links: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenderImage {
+    pub source: String,
+    pub alt: String,
+    pub title: Option<String>,
+    pub width_percent: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -72,9 +86,328 @@ impl Default for RenderSettings {
     fn default() -> Self {
         Self {
             width: 100,
-            theme: AppTheme::from_name(crate::theme::ThemeName::Oxocarbon),
+            theme: AppTheme::default(),
         }
     }
+}
+
+fn math_span_style(theme: &AppTheme, base: Style) -> Style {
+    // Use Base16 base0F (code_palette.orange): readable and distinct from existing UI text types.
+    base.fg(theme.code_palette.orange)
+}
+
+fn dim_color_90(color: Color) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => Color::Rgb(
+            ((u16::from(r) * 9) / 10) as u8,
+            ((u16::from(g) * 9) / 10) as u8,
+            ((u16::from(b) * 9) / 10) as u8,
+        ),
+        other => other,
+    }
+}
+
+fn quote_text_style(theme: &AppTheme, active_mods: Modifier) -> Style {
+    let mut style = theme.normal;
+    if let Some(fg) = theme.normal.fg {
+        style = style.fg(dim_color_90(fg));
+    }
+    style
+        .add_modifier(Modifier::ITALIC)
+        .add_modifier(active_mods)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SmartQuoteState {
+    next_double_open: bool,
+    next_single_open: bool,
+    prev_char: Option<char>,
+}
+
+impl Default for SmartQuoteState {
+    fn default() -> Self {
+        Self {
+            next_double_open: true,
+            next_single_open: true,
+            prev_char: None,
+        }
+    }
+}
+
+fn smart_quotes_text(text: &str, state: &mut SmartQuoteState) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+
+    for (idx, ch) in chars.iter().copied().enumerate() {
+        let next = chars.get(idx + 1).copied();
+        let mapped = match ch {
+            '"' => {
+                let emit_open = choose_open_quote(state.prev_char, next, state.next_double_open);
+                state.next_double_open = !emit_open;
+                if emit_open { '“' } else { '”' }
+            }
+            '\'' => {
+                if is_apostrophe_like(state.prev_char, next) {
+                    '’'
+                } else {
+                    let emit_open =
+                        choose_open_quote(state.prev_char, next, state.next_single_open);
+                    state.next_single_open = !emit_open;
+                    if emit_open { '‘' } else { '’' }
+                }
+            }
+            other => other,
+        };
+        out.push(mapped);
+        state.prev_char = Some(mapped);
+    }
+
+    out
+}
+
+fn choose_open_quote(prev: Option<char>, next: Option<char>, fallback_open: bool) -> bool {
+    let open_hint = match prev {
+        None => true,
+        Some(c) => is_open_quote_context(c),
+    };
+    let close_hint = match next {
+        None => true,
+        Some(c) => is_close_quote_context(c),
+    };
+
+    if open_hint && !close_hint {
+        true
+    } else if close_hint && !open_hint {
+        false
+    } else {
+        fallback_open
+    }
+}
+
+fn is_open_quote_context(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '(' | '[' | '{' | '<' | '/' | '-' | '—' | '–')
+}
+
+fn is_close_quote_context(c: char) -> bool {
+    c.is_whitespace() || matches!(c, ')' | ']' | '}' | '>' | '.' | ',' | ';' | ':' | '!' | '?')
+}
+
+fn is_apostrophe_like(prev: Option<char>, next: Option<char>) -> bool {
+    matches!((prev, next), (Some(p), Some(n)) if p.is_alphanumeric() && n.is_alphanumeric())
+        || matches!(
+            (prev, next),
+            (None | Some(' ' | '\t' | '\n' | '\r' | '(' | '[' | '{'), Some(n)) if n.is_ascii_digit()
+        )
+}
+
+fn math_run_style(base: Style, italic: bool) -> Style {
+    if italic {
+        base.add_modifier(Modifier::ITALIC)
+    } else {
+        base.remove_modifier(Modifier::ITALIC)
+    }
+}
+
+fn is_math_variable_char(c: char) -> bool {
+    c.is_alphabetic()
+}
+
+#[derive(Clone, Debug)]
+struct NonItalicMathFragment {
+    text: String,
+    whole_word: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MathStylingHints {
+    non_italic_fragments: Vec<NonItalicMathFragment>,
+}
+
+fn push_non_italic_math_fragment(
+    fragments: &mut Vec<NonItalicMathFragment>,
+    text: &str,
+    whole_word: bool,
+) {
+    if text.is_empty() {
+        return;
+    }
+    fragments.push(NonItalicMathFragment {
+        text: text.to_string(),
+        whole_word,
+    });
+}
+
+fn collect_non_italic_math_fragments(node: &MathNode, fragments: &mut Vec<NonItalicMathFragment>) {
+    match node {
+        MathNode::Func { name, arg } => {
+            push_non_italic_math_fragment(fragments, name, true);
+            if let Some(arg) = arg {
+                collect_non_italic_math_fragments(arg, fragments);
+            }
+        }
+        MathNode::Text(text) => {
+            push_non_italic_math_fragment(fragments, text, false);
+        }
+        MathNode::Sequence(nodes) => {
+            for node in nodes {
+                collect_non_italic_math_fragments(node, fragments);
+            }
+        }
+        MathNode::Group(inner) => collect_non_italic_math_fragments(inner, fragments),
+        MathNode::Super { base, sup } => {
+            collect_non_italic_math_fragments(base, fragments);
+            collect_non_italic_math_fragments(sup, fragments);
+        }
+        MathNode::Sub { base, sub } => {
+            collect_non_italic_math_fragments(base, fragments);
+            collect_non_italic_math_fragments(sub, fragments);
+        }
+        MathNode::SubSup { base, sub, sup } => {
+            collect_non_italic_math_fragments(base, fragments);
+            collect_non_italic_math_fragments(sub, fragments);
+            collect_non_italic_math_fragments(sup, fragments);
+        }
+        MathNode::Frac { numer, denom } => {
+            collect_non_italic_math_fragments(numer, fragments);
+            collect_non_italic_math_fragments(denom, fragments);
+        }
+        MathNode::Sqrt { index, radicand } => {
+            if let Some(index) = index {
+                collect_non_italic_math_fragments(index, fragments);
+            }
+            collect_non_italic_math_fragments(radicand, fragments);
+        }
+        MathNode::BigOp { lower, upper, .. } => {
+            if let Some(lower) = lower {
+                collect_non_italic_math_fragments(lower, fragments);
+            }
+            if let Some(upper) = upper {
+                collect_non_italic_math_fragments(upper, fragments);
+            }
+        }
+        MathNode::Parens { content, .. } => {
+            collect_non_italic_math_fragments(content, fragments);
+        }
+        MathNode::Env { rows, .. } => {
+            for row in rows {
+                for cell in row {
+                    collect_non_italic_math_fragments(cell, fragments);
+                }
+            }
+        }
+        MathNode::Lim { var, to } => {
+            push_non_italic_math_fragment(fragments, "lim", true);
+            if let Some(var) = var {
+                collect_non_italic_math_fragments(var, fragments);
+            }
+            if let Some(to) = to {
+                collect_non_italic_math_fragments(to, fragments);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn math_styling_hints(latex: &str) -> MathStylingHints {
+    let ast = MathAstParser::parse(latex);
+    let mut fragments = Vec::new();
+    collect_non_italic_math_fragments(&ast, &mut fragments);
+    MathStylingHints {
+        non_italic_fragments: fragments,
+    }
+}
+
+fn is_fragment_word_boundary(text: &str, start: usize, end: usize) -> bool {
+    let prev = text[..start].chars().next_back();
+    let next = text[end..].chars().next();
+    !prev.is_some_and(char::is_alphabetic) && !next.is_some_and(char::is_alphabetic)
+}
+
+fn find_math_fragment(
+    text: &str,
+    fragment: &NonItalicMathFragment,
+    search_start: usize,
+) -> Option<(usize, usize)> {
+    if search_start >= text.len() {
+        return None;
+    }
+    text[search_start..]
+        .match_indices(fragment.text.as_str())
+        .map(|(offset, _)| {
+            let start = search_start + offset;
+            let end = start + fragment.text.len();
+            (start, end)
+        })
+        .find(|(start, end)| !fragment.whole_word || is_fragment_word_boundary(text, *start, *end))
+}
+
+fn math_non_italic_mask(text: &str, hints: &MathStylingHints) -> Vec<bool> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut non_italic = vec![false; chars.len()];
+    let mut search_start = 0usize;
+
+    for fragment in &hints.non_italic_fragments {
+        let Some((start, end)) = find_math_fragment(text, fragment, search_start)
+            .or_else(|| find_math_fragment(text, fragment, 0))
+        else {
+            continue;
+        };
+        for (idx, (byte_idx, ch)) in chars.iter().enumerate() {
+            if *byte_idx >= start && *byte_idx < end && ch.is_alphabetic() {
+                non_italic[idx] = true;
+            }
+        }
+        search_start = end;
+    }
+
+    non_italic
+}
+
+fn math_spans_with_hints(
+    text: &str,
+    base: Style,
+    hints: Option<&MathStylingHints>,
+) -> Vec<Span<'static>> {
+    if text.is_empty() {
+        return vec![Span::styled(String::new(), math_run_style(base, false))];
+    }
+
+    let non_italic_mask = hints
+        .map(|h| math_non_italic_mask(text, h))
+        .unwrap_or_else(|| vec![false; text.chars().count()]);
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut current_italic: Option<bool> = None;
+
+    for (idx, ch) in text.chars().enumerate() {
+        let italic =
+            is_math_variable_char(ch) && !non_italic_mask.get(idx).copied().unwrap_or(false);
+        match current_italic {
+            Some(prev) if prev == italic => current.push(ch),
+            Some(prev) => {
+                spans.push(Span::styled(
+                    std::mem::take(&mut current),
+                    math_run_style(base, prev),
+                ));
+                current.push(ch);
+                current_italic = Some(italic);
+            }
+            None => {
+                current_italic = Some(italic);
+                current.push(ch);
+            }
+        }
+    }
+
+    if let Some(italic) = current_italic {
+        spans.push(Span::styled(current, math_run_style(base, italic)));
+    }
+
+    spans
+}
+
+fn styled_math_line(text: String, base: Style, hints: Option<&MathStylingHints>) -> Line<'static> {
+    Line::from(math_spans_with_hints(&text, base, hints))
 }
 
 pub fn preprocess_math(markdown: &str) -> String {
@@ -96,7 +429,7 @@ pub fn render_markdown(
     options.insert(Options::ENABLE_FOOTNOTES);
     options.insert(Options::ENABLE_MATH);
 
-    let parser = Parser::new_ext(&markdown, options);
+    let mut parser = Parser::new_ext(&markdown, options).peekable();
     let syntax_set = SyntaxSet::load_defaults_newlines();
     let syntax_theme = exact_semantic_theme(&settings.theme);
 
@@ -106,19 +439,29 @@ pub fn render_markdown(
     let mut heading_level: Option<HeadingLevel> = None;
     let mut quote_depth = 0usize;
     let mut pending_link: Option<String> = None;
+    let mut pending_image: Option<PendingImage> = None;
     let mut list_stack: Vec<ListState> = Vec::new();
     let mut table: Option<TableState> = None;
     let mut current_line: Vec<Span<'static>> = Vec::new();
     let mut current_line_links: Vec<LinkRange> = Vec::new();
     let mut active_mods = Modifier::empty();
+    let mut smart_quote_state = SmartQuoteState::default();
 
-    for event in parser {
+    while let Some(event) = parser.next() {
         if let Some(tbl) = table.as_mut() {
             match event {
                 Event::Start(Tag::TableHead) => {
                     continue;
                 }
                 Event::End(TagEnd::TableHead) => {
+                    if !tbl.current_cell.is_empty() {
+                        tbl.current_row.push(tbl.current_cell.clone());
+                        tbl.current_cell.clear();
+                    }
+                    if !tbl.current_row.is_empty() {
+                        tbl.rows.push(tbl.current_row.clone());
+                        tbl.current_row.clear();
+                    }
                     tbl.header_rows = tbl.rows.len();
                     continue;
                 }
@@ -147,7 +490,8 @@ pub fn render_markdown(
                     continue;
                 }
                 Event::Text(text) => {
-                    tbl.current_cell.push_str(&text);
+                    tbl.current_cell
+                        .push_str(&smart_quotes_text(&text, &mut smart_quote_state));
                     continue;
                 }
                 Event::Code(code) => {
@@ -173,6 +517,7 @@ pub fn render_markdown(
                             link_url: None,
                             link_ranges: vec![],
                             code_block_index: None,
+                            image_index: None,
                             heading_level: None,
                         });
                     }
@@ -182,6 +527,7 @@ pub fn render_markdown(
                         link_url: None,
                         link_ranges: vec![],
                         code_block_index: None,
+                        image_index: None,
                         heading_level: None,
                     });
                     table = None;
@@ -259,6 +605,27 @@ pub fn render_markdown(
                 Tag::Link { dest_url, .. } => {
                     pending_link = Some(dest_url.to_string());
                 }
+                Tag::Image {
+                    dest_url, title, ..
+                } => {
+                    if !current_line.is_empty() {
+                        push_current_line(
+                            &mut doc,
+                            &mut current_line,
+                            &mut current_line_links,
+                            current_line_kind(quote_depth),
+                        );
+                    }
+                    pending_image = Some(PendingImage {
+                        source: dest_url.to_string(),
+                        title: if title.trim().is_empty() {
+                            None
+                        } else {
+                            Some(title.to_string())
+                        },
+                        alt: String::new(),
+                    });
+                }
                 Tag::Strong => {
                     active_mods |= Modifier::BOLD;
                 }
@@ -281,16 +648,26 @@ pub fn render_markdown(
                         .normal
                         .patch(settings.theme.code)
                         .bg(Color::Reset);
-                    let code_lines = if code_lang == "math" || code_lang == "latex" {
+                    let math_block_style = math_span_style(&settings.theme, block_style);
+                    let is_math_block = code_lang == "math" || code_lang == "latex";
+                    let lang_trimmed = code_lang.trim();
+                    let is_ascii_block = matches!(lang_trimmed, "text" | "txt" | "plain");
+                    let rendered_code_payload = if is_math_block {
+                        code_payload.clone()
+                    } else {
+                        render_escaped_inline_math_in_code(&code_payload)
+                    };
+                    let code_lines = if is_math_block {
+                        let hints = math_styling_hints(&code_payload);
                         calcifer::math::render_block(&code_payload)
                             .into_iter()
-                            .map(|l| Line::from(vec![Span::styled(l, block_style)]))
+                            .map(|l| styled_math_line(l, math_block_style, Some(&hints)))
                             .collect::<Vec<_>>()
                     } else if code_lang.trim().is_empty() {
-                        plain_code_lines(&code_payload, block_style)
+                        plain_code_lines(&rendered_code_payload, block_style)
                     } else {
                         highlight_code_block(
-                            &code_payload,
+                            &rendered_code_payload,
                             &code_lang,
                             &syntax_set,
                             &syntax_theme,
@@ -309,7 +686,13 @@ pub fn render_markdown(
                     for rendered in padded_code_lines {
                         doc.lines.push(RenderLine {
                             line: rendered.line,
-                            kind: LineKind::Code,
+                            kind: if is_math_block {
+                                LineKind::Math
+                            } else if is_ascii_block {
+                                LineKind::Ascii
+                            } else {
+                                LineKind::Code
+                            },
                             link_url: None,
                             link_ranges: vec![],
                             code_block_index: if rendered.is_code_content {
@@ -317,6 +700,7 @@ pub fn render_markdown(
                             } else {
                                 None
                             },
+                            image_index: None,
                             heading_level: None,
                         });
                     }
@@ -328,6 +712,7 @@ pub fn render_markdown(
                         link_url: None,
                         link_ranges: vec![],
                         code_block_index: None,
+                        image_index: None,
                         heading_level: None,
                     });
                 }
@@ -345,6 +730,7 @@ pub fn render_markdown(
                             link_url: current_line_links.first().map(|l| l.url.clone()),
                             link_ranges: std::mem::take(&mut current_line_links),
                             code_block_index: None,
+                            image_index: None,
                             heading_level: heading_to_u8(heading_level),
                         });
                     }
@@ -355,6 +741,7 @@ pub fn render_markdown(
                         link_url: None,
                         link_ranges: vec![],
                         code_block_index: None,
+                        image_index: None,
                         heading_level: None,
                     });
                 }
@@ -378,17 +765,55 @@ pub fn render_markdown(
                             current_line_kind(quote_depth),
                         );
                     }
-                    doc.lines.push(RenderLine {
-                        line: Line::from(""),
-                        kind: LineKind::Normal,
-                        link_url: None,
-                        link_ranges: vec![],
-                        code_block_index: None,
-                        heading_level: None,
-                    });
+                    if list_stack.is_empty() {
+                        doc.lines.push(RenderLine {
+                            line: Line::from(""),
+                            kind: LineKind::Normal,
+                            link_url: None,
+                            link_ranges: vec![],
+                            code_block_index: None,
+                            image_index: None,
+                            heading_level: None,
+                        });
+                    }
                 }
                 TagEnd::Link => {
                     pending_link = None;
+                }
+                TagEnd::Image => {
+                    if let Some(image) = pending_image.take() {
+                        let width_percent = consume_trailing_image_width_attr(&mut parser);
+                        let image_index = doc.images.len();
+                        let display_alt = image.alt.trim().to_string();
+                        doc.images.push(RenderImage {
+                            source: image.source.clone(),
+                            alt: display_alt.clone(),
+                            title: image.title.clone(),
+                            width_percent,
+                        });
+                        let label = if display_alt.is_empty() {
+                            format!("[image] {}", image.source)
+                        } else {
+                            format!("[image] {display_alt}")
+                        };
+                        let mut style = settings.theme.line_number;
+                        style = style.add_modifier(Modifier::ITALIC);
+                        doc.lines.push(RenderLine {
+                            line: Line::from(vec![Span::styled(label, style)]),
+                            kind: LineKind::Image,
+                            link_url: if image.source.starts_with("http://")
+                                || image.source.starts_with("https://")
+                            {
+                                Some(image.source)
+                            } else {
+                                None
+                            },
+                            link_ranges: vec![],
+                            code_block_index: None,
+                            image_index: Some(image_index),
+                            heading_level: None,
+                        });
+                    }
                 }
                 TagEnd::List(_) => {
                     let _ = list_stack.pop();
@@ -399,6 +824,18 @@ pub fn render_markdown(
                             &mut current_line_links,
                             current_line_kind(quote_depth),
                         );
+                    }
+                    if list_stack.is_empty() && !doc.lines.last().is_some_and(is_blank_render_line)
+                    {
+                        doc.lines.push(RenderLine {
+                            line: Line::from(""),
+                            kind: LineKind::Normal,
+                            link_url: None,
+                            link_ranges: vec![],
+                            code_block_index: None,
+                            image_index: None,
+                            heading_level: None,
+                        });
                     }
                 }
                 TagEnd::Item => {
@@ -423,6 +860,10 @@ pub fn render_markdown(
                 _ => {}
             },
             Event::Code(code) => {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push_str(&code);
+                    continue;
+                }
                 current_line.push(Span::styled(
                     code.to_string(),
                     settings.theme.inline_code.add_modifier(active_mods),
@@ -433,27 +874,32 @@ pub fn render_markdown(
                 current_line.push(Span::styled(mark.to_string(), settings.theme.list_marker));
             }
             Event::Text(text) => {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push_str(&text);
+                    continue;
+                }
                 if in_code {
                     code_buf.push_str(&text);
                     continue;
                 }
-                let mut style = if quote_depth > 0 {
-                    settings.theme.quote
+                let display_text = smart_quotes_text(&text, &mut smart_quote_state);
+                let style = if quote_depth > 0 {
+                    quote_text_style(&settings.theme, active_mods)
                 } else {
-                    settings.theme.normal
+                    settings.theme.normal.add_modifier(active_mods)
                 };
-                style = style.add_modifier(active_mods);
                 if let Some(url) = pending_link.clone() {
-                    let link_text = text.to_string();
+                    let link_text = display_text;
                     let start = current_line
                         .iter()
                         .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
                         .sum::<usize>();
                     let link_width = UnicodeWidthStr::width(link_text.as_str());
-                    current_line.push(Span::styled(
-                        link_text.clone(),
-                        settings.theme.link.add_modifier(active_mods),
-                    ));
+                    let mut link_style = settings.theme.link.add_modifier(active_mods);
+                    if quote_depth > 0 {
+                        link_style = link_style.add_modifier(Modifier::ITALIC);
+                    }
+                    current_line.push(Span::styled(link_text.clone(), link_style));
                     if !doc.links.iter().any(|l| l == &url) {
                         doc.links.push(url.clone());
                     }
@@ -465,10 +911,22 @@ pub fn render_markdown(
                         });
                     }
                 } else {
-                    current_line.push(Span::styled(text.to_string(), style));
+                    current_line.push(Span::styled(display_text, style));
                 }
             }
             Event::SoftBreak => {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push(' ');
+                    continue;
+                }
+                if current_line.is_empty()
+                    && matches!(
+                        doc.lines.last().map(|l| l.kind),
+                        Some(LineKind::Math | LineKind::Code | LineKind::Ascii)
+                    )
+                {
+                    continue;
+                }
                 push_current_line(
                     &mut doc,
                     &mut current_line,
@@ -477,6 +935,18 @@ pub fn render_markdown(
                 );
             }
             Event::HardBreak => {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push(' ');
+                    continue;
+                }
+                if current_line.is_empty()
+                    && matches!(
+                        doc.lines.last().map(|l| l.kind),
+                        Some(LineKind::Math | LineKind::Code | LineKind::Ascii)
+                    )
+                {
+                    continue;
+                }
                 push_current_line(
                     &mut doc,
                     &mut current_line,
@@ -499,14 +969,19 @@ pub fn render_markdown(
                     link_url: None,
                     link_ranges: vec![],
                     code_block_index: None,
+                    image_index: None,
                     heading_level: None,
                 });
             }
             Event::InlineMath(text) => {
-                current_line.push(Span::styled(
-                    calcifer::math::render_inline(&text),
-                    settings.theme.normal,
-                ));
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push_str(&calcifer::math::render_inline(&text));
+                    continue;
+                }
+                let rendered = calcifer::math::render_inline(&text);
+                let style = math_span_style(&settings.theme, settings.theme.normal);
+                let hints = math_styling_hints(&text);
+                current_line.extend(math_spans_with_hints(&rendered, style, Some(&hints)));
             }
             Event::DisplayMath(text) => {
                 if !current_line.is_empty() {
@@ -524,11 +999,12 @@ pub fn render_markdown(
                     .normal
                     .patch(settings.theme.code)
                     .bg(Color::Reset);
-                let math_style = settings.theme.normal.patch(block_style);
+                let math_style = math_span_style(&settings.theme, block_style);
+                let hints = math_styling_hints(&text);
                 let padded_math_lines = pad_block_lines(
                     trimmed_math_lines
                         .into_iter()
-                        .map(|l| Line::from(vec![Span::styled(l, math_style)]))
+                        .map(|l| styled_math_line(l, math_style, Some(&hints)))
                         .collect::<Vec<_>>(),
                     None,
                     block_style,
@@ -537,21 +1013,14 @@ pub fn render_markdown(
                 for rendered in padded_math_lines {
                     doc.lines.push(RenderLine {
                         line: rendered.line,
-                        kind: LineKind::Code,
+                        kind: LineKind::Math,
                         link_url: None,
                         link_ranges: vec![],
                         code_block_index: None,
+                        image_index: None,
                         heading_level: None,
                     });
                 }
-                doc.lines.push(RenderLine {
-                    line: Line::from(""),
-                    kind: LineKind::Normal,
-                    link_url: None,
-                    link_ranges: vec![],
-                    code_block_index: None,
-                    heading_level: None,
-                });
             }
             _ => {}
         }
@@ -584,6 +1053,7 @@ fn push_current_line(
             link_url: None,
             link_ranges: vec![],
             code_block_index: None,
+            image_index: None,
             heading_level: None,
         });
     } else {
@@ -601,6 +1071,7 @@ fn push_current_line(
             link_url: line_links.first().map(|l| l.url.clone()),
             link_ranges: std::mem::take(line_links),
             code_block_index: None,
+            image_index: None,
             heading_level: None,
         });
     }
@@ -622,12 +1093,24 @@ fn trim_trailing_empty_lines(lines: &mut Vec<RenderLine>) {
             .iter()
             .map(|s| s.content.as_ref())
             .collect::<String>();
-        if text.trim().is_empty() && last.kind != LineKind::Code {
+        if text.trim().is_empty()
+            && !matches!(last.kind, LineKind::Code | LineKind::Ascii | LineKind::Math)
+        {
             lines.pop();
         } else {
             break;
         }
     }
+}
+
+fn is_blank_render_line(line: &RenderLine) -> bool {
+    line.line
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect::<String>()
+        .trim()
+        .is_empty()
 }
 
 #[derive(Default)]
@@ -652,6 +1135,13 @@ impl TableState {
 struct ListState {
     ordered: bool,
     next: u64,
+}
+
+#[derive(Clone, Debug)]
+struct PendingImage {
+    source: String,
+    title: Option<String>,
+    alt: String,
 }
 
 fn render_table_lines(table: &TableState, normal: Style, marker: Style) -> Vec<Line<'static>> {
@@ -906,6 +1396,66 @@ fn split_block_title_marker(code: &str) -> (Option<String>, String) {
         return (Some(title.to_string()), rest);
     }
     (None, code.to_string())
+}
+
+fn parse_image_width_percent_attr(text: &str) -> Option<u8> {
+    let trimmed = text.trim();
+    if !(trimmed.starts_with('{') && trimmed.ends_with('}')) {
+        return None;
+    }
+    let inner = trimmed[1..trimmed.len().saturating_sub(1)].trim();
+    for token in inner.split_whitespace() {
+        let Some(value) = token.strip_prefix("width=") else {
+            continue;
+        };
+        let Some(percent) = value.strip_suffix('%') else {
+            continue;
+        };
+        let parsed = percent.parse::<u8>().ok()?;
+        if (1..=100).contains(&parsed) {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn consume_trailing_image_width_attr<'a, I>(parser: &mut std::iter::Peekable<I>) -> Option<u8>
+where
+    I: Iterator<Item = Event<'a>>,
+{
+    let width = match parser.peek() {
+        Some(Event::Text(text)) => parse_image_width_percent_attr(text),
+        _ => None,
+    };
+    if width.is_some() {
+        let _ = parser.next();
+    }
+    width
+}
+
+fn render_escaped_inline_math_in_code(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    let mut cursor = 0usize;
+
+    while let Some(start_rel) = code[cursor..].find(r"\$") {
+        let start = cursor + start_rel;
+        let expr_start = start + 2;
+        let Some(end_rel) = code[expr_start..].find(r"\$") else {
+            break;
+        };
+        let end = expr_start + end_rel;
+        out.push_str(&code[cursor..start]);
+        let expr = code[expr_start..end].trim();
+        if expr.is_empty() {
+            out.push_str(r"\$\$");
+        } else {
+            out.push_str(&calcifer::math::render_inline(expr));
+        }
+        cursor = end + 2;
+    }
+
+    out.push_str(&code[cursor..]);
+    out
 }
 
 fn heading_prefix(level: Option<HeadingLevel>) -> String {
@@ -1379,12 +1929,13 @@ pub fn open_in_editor(path: &std::path::Path) -> Result<(), anyhow::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{AppTheme, ThemeName};
+    use crate::theme::AppTheme;
+    use ratatui::style::Modifier;
 
     fn settings() -> RenderSettings {
         RenderSettings {
             width: 80,
-            theme: AppTheme::from_name(ThemeName::Dark),
+            theme: AppTheme::default(),
         }
     }
 
@@ -1400,6 +1951,145 @@ mod tests {
             .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
             .collect::<String>();
         assert!(joined.contains("x²"));
+    }
+
+    #[test]
+    fn smart_quotes_are_used_in_rendered_text() {
+        let doc = render_markdown("\"text\" and 'quoted' and don't", &settings()).expect("render");
+        let joined = doc
+            .lines
+            .iter()
+            .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
+            .collect::<String>();
+        assert!(joined.contains("“text”"));
+        assert!(joined.contains("‘quoted’"));
+        assert!(joined.contains("don’t"));
+    }
+
+    #[test]
+    fn smart_quotes_pair_across_inline_spans() {
+        let doc = render_markdown("\"*text*\"", &settings()).expect("render");
+        let joined = doc
+            .lines
+            .iter()
+            .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
+            .collect::<String>();
+        assert!(joined.contains("“text”"));
+    }
+
+    #[test]
+    fn markdown_image_emits_image_line_and_metadata() {
+        let doc = render_markdown(
+            "![diagram alt](./img/diag.png \"Diagram Title\")",
+            &settings(),
+        )
+        .expect("render");
+        assert_eq!(doc.images.len(), 1);
+        assert_eq!(doc.images[0].source, "./img/diag.png");
+        assert_eq!(doc.images[0].alt, "diagram alt");
+        assert_eq!(doc.images[0].title.as_deref(), Some("Diagram Title"));
+        assert_eq!(doc.images[0].width_percent, None);
+
+        let image_line = doc
+            .lines
+            .iter()
+            .find(|l| l.kind == LineKind::Image)
+            .expect("image line");
+        let line_text = image_line
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>();
+        assert!(line_text.contains("[image] diagram alt"));
+        assert_eq!(image_line.image_index, Some(0));
+    }
+
+    #[test]
+    fn markdown_url_image_exposes_openable_link() {
+        let url = "https://example.com/plot.png";
+        let doc = render_markdown(&format!("![plot]({url})"), &settings()).expect("render");
+        let image_line = doc
+            .lines
+            .iter()
+            .find(|l| l.kind == LineKind::Image)
+            .expect("image line");
+        assert_eq!(image_line.link_url.as_deref(), Some(url));
+    }
+
+    #[test]
+    fn markdown_image_width_percent_attribute_is_parsed() {
+        let doc =
+            render_markdown("![diagram](./img/diag.png){width=65%}", &settings()).expect("render");
+        assert_eq!(doc.images.len(), 1);
+        assert_eq!(doc.images[0].width_percent, Some(65));
+        let joined = doc
+            .lines
+            .iter()
+            .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
+            .collect::<String>();
+        assert!(!joined.contains("{width=65%}"));
+    }
+
+    #[test]
+    fn markdown_invalid_image_width_percent_attribute_is_ignored() {
+        let doc =
+            render_markdown("![diagram](./img/diag.png){width=140%}", &settings()).expect("render");
+        assert_eq!(doc.images.len(), 1);
+        assert_eq!(doc.images[0].width_percent, None);
+    }
+
+    #[test]
+    fn code_fence_quotes_stay_literal() {
+        let doc = render_markdown("```text\n\"text\" 'word'\n```", &settings()).expect("render");
+        let joined = doc
+            .lines
+            .iter()
+            .filter(|l| matches!(l.kind, LineKind::Code | LineKind::Ascii))
+            .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
+            .collect::<String>();
+        assert!(joined.contains("\"text\" 'word'"));
+        assert!(!joined.contains("“text” ‘word’"));
+    }
+
+    #[test]
+    fn escaped_inline_math_in_code_segments_is_rendered() {
+        assert_eq!(
+            render_escaped_inline_math_in_code(r"value = \$x^2\$"),
+            "value = x²"
+        );
+        assert_eq!(
+            render_escaped_inline_math_in_code(r"value = \$x^2"),
+            r"value = \$x^2"
+        );
+    }
+
+    #[test]
+    fn escaped_math_markers_render_inside_fenced_text_code() {
+        let md = "```text\nvalue = \\$x^2\\$\n```";
+        let doc = render_markdown(md, &settings()).expect("render");
+        let joined = doc
+            .lines
+            .iter()
+            .filter(|l| matches!(l.kind, LineKind::Code | LineKind::Ascii))
+            .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
+            .collect::<String>();
+        assert!(joined.contains("value = x²"));
+        assert!(doc.code_blocks[0].contains(r"\$x^2\$"));
+    }
+
+    #[test]
+    fn unescaped_math_markers_stay_literal_inside_fenced_text_code() {
+        let md = "```text\nvalue = $x^2$\n```";
+        let doc = render_markdown(md, &settings()).expect("render");
+        let joined = doc
+            .lines
+            .iter()
+            .filter(|l| matches!(l.kind, LineKind::Code | LineKind::Ascii))
+            .flat_map(|l| l.line.spans.iter().map(|s| s.content.to_string()))
+            .collect::<String>();
+        assert!(joined.contains("value = $x^2$"));
+        assert!(!joined.contains("value = x²"));
     }
 
     #[test]
@@ -1493,7 +2183,7 @@ mod tests {
 
     #[test]
     fn exact_semantic_theme_uses_code_palette_colors() {
-        let mut theme = AppTheme::from_name(ThemeName::Dark);
+        let mut theme = AppTheme::default();
         theme.code_palette.cyan = ratatui::style::Color::Rgb(1, 2, 3);
         let syn = super::exact_semantic_theme(&theme);
         assert!(syn.scopes.iter().any(|item| {
@@ -1544,6 +2234,16 @@ mod tests {
                 .any(|s| s.content.as_ref().contains('─'))
         });
         assert!(has_frac_bar);
+        let math_span = doc
+            .lines
+            .iter()
+            .flat_map(|l| l.line.spans.iter())
+            .find(|s| s.content.as_ref().contains('─'))
+            .expect("math span");
+        assert_eq!(
+            math_span.style.fg,
+            Some(settings().theme.code_palette.orange)
+        );
     }
 
     #[test]
@@ -1560,13 +2260,34 @@ mod tests {
     }
 
     #[test]
+    fn quote_text_uses_dimmed_color_and_italic() {
+        let doc = render_markdown("> quoted text", &settings()).expect("render");
+        let quote_line = doc
+            .lines
+            .iter()
+            .find(|l| l.kind == LineKind::Quote)
+            .expect("quote line");
+        let text_span = quote_line
+            .line
+            .spans
+            .iter()
+            .find(|s| s.content.contains("quoted"))
+            .expect("quote span");
+        assert_eq!(
+            text_span.style.fg,
+            settings().theme.normal.fg.map(dim_color_90)
+        );
+        assert!(text_span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
     fn display_math_is_left_trimmed_consistently() {
         let md = "$$\na = b\nm^{e^{d}} = m\n$$";
         let doc = render_markdown(md, &settings()).expect("render");
         let math_lines: Vec<String> = doc
             .lines
             .iter()
-            .filter(|l| l.kind == LineKind::Code)
+            .filter(|l| l.kind == LineKind::Math)
             .map(|l| {
                 l.line
                     .spans
@@ -1729,6 +2450,76 @@ mod tests {
     }
 
     #[test]
+    fn table_header_titles_are_visible() {
+        let md = "| H1 | H2 |\n| - | - |\n| one | 1 |";
+        let doc = render_markdown(md, &settings()).expect("render");
+        let lines: Vec<String> = doc
+            .lines
+            .iter()
+            .map(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|sp| sp.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        let header_idx = lines
+            .iter()
+            .position(|line| line.contains("H1") && line.contains("H2"))
+            .expect("header row");
+        let sep_idx = lines
+            .iter()
+            .position(|line| line.contains('├'))
+            .expect("header separator");
+        let body_idx = lines
+            .iter()
+            .position(|line| line.contains("one") && line.contains("1"))
+            .expect("body row");
+        assert!(header_idx < sep_idx);
+        assert!(sep_idx < body_idx);
+    }
+
+    #[test]
+    fn table_body_rows_remain_visible() {
+        let md = "| H1 | H2 |\n| - | - |\n| a | b |\n| c | d |";
+        let doc = render_markdown(md, &settings()).expect("render");
+        let lines: Vec<String> = doc
+            .lines
+            .iter()
+            .map(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|sp| sp.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        let header_idx = lines
+            .iter()
+            .position(|line| line.contains("H1") && line.contains("H2"))
+            .expect("header row");
+        let sep_idx = lines
+            .iter()
+            .position(|line| line.contains('├'))
+            .expect("header separator");
+        let body_idx = lines
+            .iter()
+            .position(|line| line.contains("a") && line.contains("b"))
+            .expect("first body row");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("c") && line.contains("d")),
+            "second body row"
+        );
+        assert!(header_idx < sep_idx);
+        assert!(sep_idx < body_idx);
+    }
+
+    #[test]
     fn list_items_render_on_separate_lines() {
         let doc = render_markdown("- a\n- b", &settings()).expect("render");
         let bullet_lines = doc
@@ -1744,6 +2535,187 @@ mod tests {
             })
             .count();
         assert_eq!(bullet_lines, 2);
+    }
+
+    #[test]
+    fn list_has_single_separator_after_block() {
+        let doc = render_markdown("before\n\n- a\n- b\n\nafter", &settings()).expect("render");
+        let lines = doc
+            .lines
+            .iter()
+            .map(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let bullet_positions = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| if s.starts_with("• ") { Some(i) } else { None })
+            .collect::<Vec<_>>();
+        assert_eq!(bullet_positions.len(), 2);
+        let first = bullet_positions[0];
+        let last = bullet_positions[1];
+        assert!(first > 0);
+        assert!(last + 1 < lines.len());
+        assert!(lines[first - 1].trim().is_empty());
+        assert!(lines[last + 1].trim().is_empty());
+        assert!(
+            !lines[first..=last]
+                .iter()
+                .any(|l| l.trim().is_empty() && !l.starts_with("• "))
+        );
+    }
+
+    #[test]
+    fn display_math_lines_use_math_kind() {
+        let doc = render_markdown("$$\na=b\n$$", &settings()).expect("render");
+        assert!(doc.lines.iter().any(|l| l.kind == LineKind::Math));
+        assert!(!doc.lines.iter().any(|l| l.kind == LineKind::Code));
+    }
+
+    #[test]
+    fn display_math_does_not_insert_extra_normal_blank_after_block() {
+        let doc = render_markdown("before\n$$\nx\n$$\nafter", &settings()).expect("render");
+        let last_math_idx = doc
+            .lines
+            .iter()
+            .rposition(|l| l.kind == LineKind::Math)
+            .expect("math lines");
+        let after_idx = doc
+            .lines
+            .iter()
+            .position(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    .contains("after")
+            })
+            .expect("after line");
+        let extra_normal_blanks = doc.lines[last_math_idx + 1..after_idx]
+            .iter()
+            .filter(|l| {
+                l.kind == LineKind::Normal
+                    && l.line
+                        .spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                        .trim()
+                        .is_empty()
+            })
+            .count();
+        assert_eq!(extra_normal_blanks, 0);
+    }
+
+    #[test]
+    fn inline_math_uses_readable_tint_and_italics() {
+        let doc = render_markdown("a $x$ b", &settings()).expect("render");
+        let math_span = doc
+            .lines
+            .iter()
+            .flat_map(|l| l.line.spans.iter())
+            .find(|s| s.content.as_ref().contains('x'))
+            .expect("inline math span");
+        assert_eq!(
+            math_span.style.fg,
+            Some(settings().theme.code_palette.orange)
+        );
+        assert!(math_span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn display_math_uses_readable_tint_and_italics() {
+        let doc = render_markdown("$$\nx\n$$", &settings()).expect("render");
+        let math_span = doc
+            .lines
+            .iter()
+            .filter(|l| l.kind == LineKind::Math)
+            .flat_map(|l| l.line.spans.iter())
+            .find(|s| s.content.as_ref().contains('x'))
+            .expect("display math span");
+        assert_eq!(
+            math_span.style.fg,
+            Some(settings().theme.code_palette.orange)
+        );
+        assert!(math_span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn inline_math_operators_are_not_italicized() {
+        let doc = render_markdown("a $x=1$ b", &settings()).expect("render");
+        let operator_span = doc
+            .lines
+            .iter()
+            .flat_map(|l| l.line.spans.iter())
+            .find(|s| s.content.as_ref().contains('='))
+            .expect("operator span");
+        assert!(!operator_span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn inline_math_functions_and_text_are_not_italicized() {
+        let doc =
+            render_markdown(r"a $\sin x + \mod y + \text{rand}$ b", &settings()).expect("render");
+        let spans: Vec<_> = doc.lines.iter().flat_map(|l| l.line.spans.iter()).collect();
+
+        let sin_span = spans
+            .iter()
+            .find(|s| s.content.as_ref().contains("sin"))
+            .expect("sin span");
+        assert!(!sin_span.style.add_modifier.contains(Modifier::ITALIC));
+
+        let mod_span = spans
+            .iter()
+            .find(|s| s.content.as_ref().contains("mod"))
+            .expect("mod span");
+        assert!(!mod_span.style.add_modifier.contains(Modifier::ITALIC));
+
+        let text_span = spans
+            .iter()
+            .find(|s| s.content.as_ref().contains("rand"))
+            .expect("text span");
+        assert!(!text_span.style.add_modifier.contains(Modifier::ITALIC));
+
+        let variable_span = spans
+            .iter()
+            .find(|s| s.content.as_ref().contains('x'))
+            .expect("x span");
+        assert!(variable_span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn display_math_functions_and_text_are_not_italicized() {
+        let doc = render_markdown("$$\n\\sin x + \\text{rand}\n$$", &settings()).expect("render");
+        let spans: Vec<_> = doc
+            .lines
+            .iter()
+            .filter(|l| l.kind == LineKind::Math)
+            .flat_map(|l| l.line.spans.iter())
+            .collect();
+
+        let sin_span = spans
+            .iter()
+            .find(|s| s.content.as_ref().contains("sin"))
+            .expect("sin span");
+        assert!(!sin_span.style.add_modifier.contains(Modifier::ITALIC));
+
+        let text_span = spans
+            .iter()
+            .find(|s| s.content.as_ref().contains("rand"))
+            .expect("text span");
+        assert!(!text_span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn text_fence_lines_use_ascii_kind() {
+        let doc = render_markdown("```text\nA -> B\n```", &settings()).expect("render");
+        assert!(doc.lines.iter().any(|l| l.kind == LineKind::Ascii));
     }
 
     #[test]

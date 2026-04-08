@@ -1,0 +1,23 @@
+[base16]
+  base00 = "#2a2f38"
+  base01 = "#262a28"
+  base02 = "#63708a"
+  base03 = "#8896a7"
+  base04 = "#8896a7"
+  base05 = "#d4e4ff"
+  base06 = "#f2f7ff"
+  base07 = "#2fdac3"
+  base08 = "#ea79f2"
+  base09 = "#f6befa"
+  base0a = "#a6adff"
+  base0b = "#1bbba6"
+  base0c = "#74a8fb"
+  base0d = "#978aff"
+  base0e = "#1bbba6"
+  base0f = "#a3c6ff"
+
+[pager]
+  heading = "#978aff"
+
+[code]
+  pink = "#978aff"

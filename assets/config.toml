@@ -1,4 +1,4 @@
-# Override-ready app config template.
+# Config template with default values.
 # Copy to ~/.config/calci/config.toml and tweak as needed.
 
 pager = true

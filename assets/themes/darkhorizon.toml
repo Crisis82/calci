@@ -1,27 +1,23 @@
-# Derived from ../darkhorizon.lua base_30/base_16.
-# Representative Base16 mapping for calci (Base16-first exact mode),
-# refined with pink accents for pager headings and dashboard selection.
-
 [base16]
-base00 = "#1D1C1C" # nvim bg / one_bg
-base01 = "#272626" # black2 / statusline_bg
-base02 = "#2B2B2B" # one_bg3 / lightbg
-base03 = "#363636" # line / grey
-base04 = "#525252" # light_grey
-base05 = "#DDDDDD" # white
-base06 = "#E6E1CF" # base_16 light fg
-base07 = "#D9D7CE" # base_16 light alt fg
-base08 = "#E95678" # red
-base09 = "#FBC3A7" # sun
-base0a = "#25B0BC" # class-like accent from base_16
-base0b = "#FAB795" # string-like accent
-base0c = "#59E1E3" # cyan
-base0d = "#3FC4DE" # folder/function blue
-base0e = "#B877DB" # purple
-base0f = "#F09483" # orange
+  base00 = "#1d1c1c"
+  base01 = "#272626"
+  base02 = "#2b2b2b"
+  base03 = "#363636"
+  base04 = "#525252"
+  base05 = "#dddddd"
+  base06 = "#e6e1cf"
+  base07 = "#d9d7ce"
+  base08 = "#e95678"
+  base09 = "#fbc3a7"
+  base0a = "#25b0bc"
+  base0b = "#fab795"
+  base0c = "#59e1e3"
+  base0d = "#3fc4de"
+  base0e = "#b877db"
+  base0f = "#f09483"
 
 [pager]
-heading = "#EE64AC"
+  heading = "#ee64ac"
 
 [code]
-pink = "#EE64AC"
+  pink = "#ee64ac"

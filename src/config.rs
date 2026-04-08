@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::theme::{AppTheme, ThemeName};
+use crate::theme::AppTheme;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -263,23 +263,7 @@ struct Base16Section {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
-struct Base10Section {
-    black: Option<String>,
-    grey: Option<String>,
-    white: Option<String>,
-    green: Option<String>,
-    cyan: Option<String>,
-    blue: Option<String>,
-    purple: Option<String>,
-    pink: Option<String>,
-    red: Option<String>,
-    yellow: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
 struct RawColorsFile {
-    base10: Option<Base10Section>,
     base16: Option<Base16Section>,
     pager: Option<PagerColorsSection>,
     search: Option<SearchColorsSection>,
@@ -289,33 +273,6 @@ struct RawColorsFile {
 impl RawColorsFile {
     fn into_colors(self) -> ColorsFile {
         let mut out = ColorsFile::default();
-        if let Some(b) = self.base10 {
-            out.normal_fg = b.white.clone();
-            out.heading_fg = b.purple.clone();
-            out.quote_fg = b.grey.clone();
-            out.list_marker_fg = b.blue.clone();
-            out.inline_code_fg = b.cyan.clone();
-            out.link_fg = b.cyan.clone();
-            out.status_fg = b.white.clone();
-            out.status_bg = b.black.clone();
-            out.search_hit_fg = b.black.clone();
-            out.search_hit_bg = b.blue.clone();
-            out.search_current_fg = b.black.clone();
-            out.search_current_bg = b.green.clone();
-            out.cursor_line_bg = b.black.clone();
-            out.line_number_fg = b.grey.clone();
-            out.code_black = b.black.clone();
-            out.code_grey = b.grey.clone();
-            out.code_white = b.white.clone();
-            out.code_purple = b.purple.clone();
-            out.code_pink = b.pink.clone();
-            out.code_blue = b.blue.clone();
-            out.code_cyan = b.cyan.clone();
-            out.code_green = b.green.clone();
-            out.code_red = b.red.clone();
-            out.code_yellow = b.yellow.clone();
-            out.code_orange = b.blue.clone();
-        }
         if let Some(b) = self.base16 {
             out.normal_fg = b.base05.clone();
             out.heading_fg = b.base0e.clone();
@@ -478,7 +435,7 @@ impl LoadedConfig {
     }
 
     pub fn build_theme(&self) -> AppTheme {
-        let mut theme = AppTheme::from_name(ThemeName::Oxocarbon);
+        let mut theme = AppTheme::default();
         theme.apply_overrides(&self.colors);
         theme
     }
@@ -499,15 +456,15 @@ fn default_config_path() -> PathBuf {
 
 fn default_colors_path() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg).join("calci").join("colors.toml");
+        return PathBuf::from(xdg).join("calci").join("color.toml");
     }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home)
             .join(".config")
             .join("calci")
-            .join("colors.toml");
+            .join("color.toml");
     }
-    PathBuf::from("colors.toml")
+    PathBuf::from("color.toml")
 }
 
 #[cfg(test)]
@@ -519,7 +476,7 @@ mod tests {
     fn defaults_load_when_files_missing() {
         let d = tempdir().expect("tempdir");
         let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
+        let clr = d.path().join("color.toml");
         let loaded = LoadedConfig::load(Some(&cfg), Some(&clr)).expect("load");
         assert!(loaded.app.pager);
         assert!(loaded.app.math);
@@ -536,7 +493,7 @@ mod tests {
     fn parse_config_values() {
         let d = tempdir().expect("tempdir");
         let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
+        let clr = d.path().join("color.toml");
         fs::write(
             &cfg,
             r#"
@@ -577,7 +534,7 @@ heading = "#FF00FF"
     fn parse_nested_dashboard_config_values() {
         let d = tempdir().expect("tempdir");
         let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
+        let clr = d.path().join("color.toml");
         fs::write(
             &cfg,
             r#"
@@ -603,7 +560,7 @@ show_edited_age = true
     fn parse_nested_colors_sections_values() {
         let d = tempdir().expect("tempdir");
         let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
+        let clr = d.path().join("color.toml");
         fs::write(&cfg, "").expect("write cfg");
         fs::write(
             &clr,
@@ -673,7 +630,7 @@ orange = "#00000b"
     fn parse_base16_section_auto_maps_defaults() {
         let d = tempdir().expect("tempdir");
         let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
+        let clr = d.path().join("color.toml");
         fs::write(&cfg, "").expect("write cfg");
         fs::write(
             &clr,
@@ -703,52 +660,35 @@ heading = "#222222" # explicit section overrides base16
     }
 
     #[test]
-    fn parse_base10_section_auto_maps_defaults() {
-        let d = tempdir().expect("tempdir");
-        let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
-        fs::write(&cfg, "").expect("write cfg");
-        fs::write(
-            &clr,
-            r##"
-[base10]
-black = "#101010"
-grey = "#202020"
-white = "#f0f0f0"
-green = "#00aa00"
-cyan = "#00bbbb"
-blue = "#0000cc"
-purple = "#7700dd"
-pink = "#cc33aa"
-red = "#dd2244"
-yellow = "#eebb66"
-"##,
-        )
-        .expect("write colors");
-        let loaded = LoadedConfig::load(Some(&cfg), Some(&clr)).expect("load");
-        assert_eq!(loaded.colors.normal_fg.as_deref(), Some("#f0f0f0"));
-        assert_eq!(loaded.colors.heading_fg.as_deref(), Some("#7700dd"));
-        assert_eq!(loaded.colors.quote_fg.as_deref(), Some("#202020"));
-        assert_eq!(loaded.colors.list_marker_fg.as_deref(), Some("#0000cc"));
-        assert_eq!(loaded.colors.inline_code_fg.as_deref(), Some("#00bbbb"));
-        assert_eq!(loaded.colors.link_fg.as_deref(), Some("#00bbbb"));
-        assert_eq!(loaded.colors.search_hit_fg.as_deref(), Some("#101010"));
-        assert_eq!(loaded.colors.search_hit_bg.as_deref(), Some("#0000cc"));
-        assert_eq!(loaded.colors.search_current_bg.as_deref(), Some("#00aa00"));
-        assert_eq!(loaded.colors.code_orange.as_deref(), Some("#0000cc"));
-        assert_eq!(loaded.colors.code_red.as_deref(), Some("#dd2244"));
-    }
-
-    #[test]
     fn flat_color_keys_are_rejected() {
         let d = tempdir().expect("tempdir");
         let cfg = d.path().join("config.toml");
-        let clr = d.path().join("colors.toml");
+        let clr = d.path().join("color.toml");
         fs::write(&cfg, "").expect("write cfg");
         fs::write(&clr, "heading_fg = \"#FF00FF\"").expect("write colors");
         let err = LoadedConfig::load(Some(&cfg), Some(&clr)).expect_err("must fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("unknown field"));
         assert!(msg.contains("heading_fg"));
+    }
+
+    #[test]
+    fn base10_section_is_rejected() {
+        let d = tempdir().expect("tempdir");
+        let cfg = d.path().join("config.toml");
+        let clr = d.path().join("color.toml");
+        fs::write(&cfg, "").expect("write cfg");
+        fs::write(
+            &clr,
+            r##"
+[base10]
+black = "#101010"
+"##,
+        )
+        .expect("write colors");
+        let err = LoadedConfig::load(Some(&cfg), Some(&clr)).expect_err("must fail");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unknown field"));
+        assert!(msg.contains("base10"));
     }
 }

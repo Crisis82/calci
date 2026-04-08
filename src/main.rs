@@ -53,6 +53,10 @@ struct Cli {
     #[arg(value_hint = ValueHint::FilePath)]
     file: Option<PathBuf>,
 
+    /// Use a specific color palette file
+    #[arg(long = "color", value_name = "FILE", value_hint = ValueHint::FilePath)]
+    color: Option<PathBuf>,
+
     /// Disable pager UI (prints rendered plain text)
     #[arg(short = 'p', long = "plain")]
     plain: bool,
@@ -76,7 +80,7 @@ fn main() -> anyhow::Result<()> {
         print_completion(shell);
         return Ok(());
     }
-    let loaded = LoadedConfig::load(None, None)?;
+    let loaded = LoadedConfig::load(None, cli.color.as_deref())?;
     let chosen_theme = loaded.build_theme();
     let config = AppConfig {
         input_path: cli.file.clone(),
@@ -174,7 +178,8 @@ fn run_pager(
     terminal.clear().ok();
 
     let mut size = terminal.size().context("terminal size")?;
-    if config.mouse {
+    let pager_mouse_capture = config.mouse;
+    if pager_mouse_capture {
         execute!(terminal.backend_mut(), crossterm::event::EnableMouseCapture).ok();
     }
     let source = markdown;
@@ -185,7 +190,7 @@ fn run_pager(
         config.line_numbers,
         config.line_highlight,
         config.wrap,
-        config.mouse,
+        pager_mouse_capture,
         config.smooth_scroll,
         config.math,
         config.center_blocks,
@@ -198,6 +203,9 @@ fn run_pager(
     let mut last_tick = Instant::now();
     let run_result: anyhow::Result<()> = loop {
         terminal.draw(|f| draw(f, &state)).context("draw frame")?;
+        if let Err(err) = state.render_kitty_images(size.into()) {
+            state.set_status(format!("image render error: {err}"), true);
+        }
 
         if state.should_quit {
             break Ok(());
@@ -230,8 +238,9 @@ fn run_pager(
         }
     };
 
+    let _ = state.clear_kitty_images();
     disable_raw_mode().ok();
-    if config.mouse {
+    if pager_mouse_capture {
         execute!(
             terminal.backend_mut(),
             crossterm::event::DisableMouseCapture
@@ -305,7 +314,7 @@ _calci() {
     fi
     prev="$3"
     cmd=""
-    opts="-h -v -p -c --help --version --plain --completion"
+    opts="-h -v -p -c --help --version --plain --completion --color"
 
     for i in "${COMP_WORDS[@]:0:COMP_CWORD}"; do
         case "${cmd},${i}" in
@@ -326,6 +335,10 @@ _calci() {
             case "${prev}" in
                 --completion|-c)
                     COMPREPLY=($(compgen -W "bash zsh fish" -- "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -f -- "${cur}"))
                     return 0
                     ;;
                 *)
@@ -397,6 +410,7 @@ _calci() {
     '--help[Print help]' \
     '-v[Print version]' \
     '--version[Print version]' \
+    '--color[Use palette file path]:file:_files' \
     '-p[Disable pager UI (prints rendered plain text)]' \
     '--plain[Disable pager UI (prints rendered plain text)]' \
     '-c[Print shell completion script (bash|zsh|fish)]:shell:(bash zsh fish)' \
@@ -446,6 +460,7 @@ fn fish_completion_script() -> &'static str {
 end
 
 complete -c calci -s c -l completion -d 'Print shell completion script (bash|zsh|fish)' -r -f -a "bash zsh fish"
+complete -c calci -l color -d 'Use palette file path' -r -f -a '(__fish_complete_path)'
 complete -c calci -s p -l plain -d 'Disable pager UI (prints rendered plain text)'
 complete -c calci -s h -l help -d 'Print help'
 complete -c calci -s v -l version -d 'Print version'
@@ -1777,6 +1792,9 @@ mod tests {
         assert!(zsh_completion_script().contains("#compdef calci"));
         assert!(fish_completion_script().contains("complete -c calci"));
         assert!(bash_completion_script().contains("opts=\"-h -v -p -c"));
+        assert!(bash_completion_script().contains("--color"));
+        assert!(zsh_completion_script().contains("--color[Use palette file path]"));
+        assert!(fish_completion_script().contains("complete -c calci -l color"));
         assert!(zsh_completion_script().contains("-p[Disable pager UI"));
         assert!(zsh_completion_script().contains("compadd -Q -S '' --"));
         assert!(fish_completion_script().contains("complete -c calci -s p -l plain"));
@@ -1988,7 +2006,7 @@ mod tests {
 
     #[test]
     fn dashboard_kb_line_renders_new_page_keys() {
-        let theme = AppTheme::from_name(crate::theme::ThemeName::Oxocarbon);
+        let theme = AppTheme::default();
         let line = dashboard_kb_line(&theme, "h, left arrow", "prev page");
         let text = line_text(&line);
         assert!(text.contains("h, left arrow"));
@@ -1997,7 +2015,7 @@ mod tests {
 
     #[test]
     fn dashboard_help_line_layout_snapshot() {
-        let theme = AppTheme::from_name(crate::theme::ThemeName::Oxocarbon);
+        let theme = AppTheme::default();
         let line = dashboard_kb_line(&theme, "h, left arrow", "prev page");
         assert_eq!(line_text(&line), "  h, left arrow       prev page");
     }
@@ -2065,7 +2083,7 @@ mod tests {
 
     #[test]
     fn dashboard_help_center_layout_snapshot() {
-        let theme = AppTheme::from_name(crate::theme::ThemeName::Oxocarbon);
+        let theme = AppTheme::default();
         let rows = vec![dashboard_kb_line(&theme, "q", "quit")];
         let centered = center_dashboard_help_lines(rows, 30, 4);
         let texts = centered.iter().map(line_text).collect::<Vec<_>>();
@@ -2081,7 +2099,7 @@ mod tests {
 
     #[test]
     fn dashboard_help_lines_can_be_centered() {
-        let theme = AppTheme::from_name(crate::theme::ThemeName::Oxocarbon);
+        let theme = AppTheme::default();
         let rows = vec![dashboard_kb_line(&theme, "q", "quit")];
         let centered = center_dashboard_help_lines(rows, 30, 4);
         assert!(centered.len() >= 4);

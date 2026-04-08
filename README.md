@@ -1,28 +1,29 @@
 # calci
 
-Rust TUI markdown pager inspired by Glow, with integrated math rendering via `calcifer`.
+Rust TUI markdown pager inspired by [Glow](https://github.com/charmbracelet/glow) and heavily modified on my personal needs that integrates math rendering via [Calcifer](https://github.com/Crisis82/calcifer).
+
+![pager first image](./assets/screenshots/pager1.png)
+![pager second image](./assets/screenshots/pager2.png "Pager")
+![dashboard image](./assets/screenshots/dashboard.png "Dashboard view")
+![plain mode image](./assets/screenshots/plain.png "Plain mode")
 
 ## Features
 
-- Pager-first TUI interface (default mode) + no-arg dashboard mode
-- Smooth scrolling (`j/k`, arrows, page up/down, mouse wheel)
-- Search in text (`/`, `n`, `N`) — skips code blocks and math/ascii sections
-- Open source file in editor (`e`) and reload (`r`)
-- Configurable behavior via `config.toml` and colors via `colors.toml`
+- Dashboard, pager and plain mode
+- Text/File search (`/`, `n`, `N`)
+- Direct editing (`e`) and reload (`r`)
+- Configurable behavior via `config.toml` and colors via `color.toml`
 - Jekyll-like front matter header (`--- title: ... ---`) with sticky top title
-- Markdown + code block rendering with syntax highlighting
-- Math rendering through `calcifer` (`$...$`, `$$...$$`, ` ```math ` blocks)
-- Copy current code block to clipboard only (`y` or click on code line)
-- Open links (`o`) or mouse click on link lines, with URL confirm popup
-- Centering only for tables and block quotes (math blocks are left-aligned)
-- Reactive status bar and `?` keybindings popup
-- Search highlights matched words; current active match uses a distinct color
-- Optional current-line highlight via config (`line_highlight = false` by default)
-- Clipboard copy uses `wl-copy`
-- Shell completion generation (`-c|--completion bash|zsh|fish`)
-- Glow-like interactive dashboard when launched with no file argument
-- Incremental dashboard indexing with cached file list for faster startup in large trees
+- Code block rendering with syntax highlighting and title support
+- Math rendering through `calcifer` (`$...$`, `$$...$$`)
+- Images rendering via Kitty graphics protocol with width support
+- Math support in code blocks via escaped markers `\$...\$`
+- Copy entire code block to clipboard with `y` or mouse click
+- Link opening with `o` or mouse click (optional confirmation popup)
+- Centered tables and ASCII drawings
 - Markdown formatting support: headings, bold, italic, strikethrough, links, block quotes, lists, code fences, tables
+- Typographic smart quotes
+- Toggable mouse mode to allow text selection
 
 ## Build
 
@@ -34,49 +35,33 @@ cargo build --release
 
 ```bash
 # Pager mode (default)
-./target/release/calci README.md
-
-# Read from stdin
-cat README.md | ./target/release/calci
+calci README.md
 
 # Non-pager mode (render to stdout)
-./target/release/calci -p README.md
+calci --plain README.md
 
 # Generate shell completion
-./target/release/calci -c zsh > _calci
+calci -c zsh > _calci
 ```
 
-Positional tab completion suggests only Markdown files (`.md`, `.markdown`) and relative directories that contain Markdown files.
+Completion offers also positional tab suggestion of Markdown files and relative directories that contain Markdown files.
 
 ### Config files
 
 Defaults:
 
 - app config is read from `~/.config/calci/config.toml` when present
-- colors are read from `~/.config/calci/colors.toml` when present
+- colors are read from `~/.config/calci/color.toml` when present
 - dashboard open history: `~/.config/calci/dashboard_state.toml`
 - dashboard file cache: `~/.config/calci/dashboard_cache.toml`
-
-Project-local examples are included:
-
-- `assets/configs.toml`
-- themes:
-  - `assets/themes/oxocarbon.toml`
-  - `assets/themes/darkhorizon.toml`
-  - `assets/themes/oxocarbon-base10.toml`
-  - `assets/themes/darkhorizon-base10.toml`
+- `--color <FILE>` overrides the palette file path for the current run
 
 `config.toml` supports:
 - `dashboard_sort = "last_open"` (default) or `"last_edited"`
 - `dashboard_fuzzy_mode = "loose"` (default) or `"strict"`
 - `dashboard_show_edited_age = false` (default)
-- `mouse = true` enables dashboard click + wheel gestures (up/down: files, left/right: pages)
+- `mouse = true` enables dashboard click + wheel gestures and pager mouse actions by default
 - dashboard hotkey `s` toggles sort mode (`last_open`/`last_edited`) at runtime
-
-You can also use nested dashboard keys:
-- `[dashboard] sort = "last_open" | "last_edited"`
-- `[dashboard] fuzzy_mode = "loose" | "strict"`
-- `[dashboard] show_edited_age = true | false`
 
 ## Keybindings
 
@@ -87,10 +72,11 @@ You can also use nested dashboard keys:
 - `n` / `N`: next / previous match
 - `y`: copy selected code block
 - `o`: open link on selected line (shows confirm popup)
-- mouse click on line with link: open link
-- mouse click on code line: copy code block
+- mouse click on line with link: open link (when selection mode is off)
+- mouse click on code line: copy code block (when selection mode is off)
 - `e`: open editor (`$EDITOR`, default `vi`)
 - `r`: reload content
+- `m`: toggle selection mode (off by default)
 - `?`: keybindings popup
 
 ### Dashboard search modes
@@ -100,41 +86,16 @@ You can also use nested dashboard keys:
 - `strict`: contiguous substring only.
   Example: `read` matches `docs/readme.md`, but `drm` does not.
 
-### colors.toml format
+### color.toml format
 
-`calci` uses a strict nested palette format:
-
-- `[base16]` with lowercase keys `base00..base0f`
-- `[base10]` with `black, grey, white, green, cyan, blue, purple, pink, red, yellow`
-- Nested sections:
+`Calci` uses a `[base16]` color palette that auto-maps defaults for pager/search/code
+For explicit overrides, the following sections can be adjusted:
   - `[pager]` with `text`, `heading`, `quote`, `list_marker`, `link`, `status_fg`, `status_bg`, `cursor_line_bg`, `line_number_fg`
   - `[search]` with `hit_fg`, `hit_bg`, `current_fg`, `current_bg`
   - `[code]` with `inline`, `black`, `grey`, `white`, `purple`, `pink`, `blue`, `cyan`, `green`, `red`, `yellow`, `orange`
 
-`[base16]` or `[base10]` auto-maps defaults for pager/search/code. `[pager]`, `[search]`, and `[code]` act as explicit overrides.
-
-Fenced-code syntax highlighting is exact semantic scope mapping from `[code]` (no blending and no nearest-color bucketing).
-
-The bundled default `colors.toml` is the refined Oxocarbon mapping (including stronger semantic scope separation for fenced code).
-
-When a `colors.toml` is provided, calci derives the whole UI palette from it (pager, dashboard, popups, status, headings, search, and code), with only fallback defaults used when no colors file is provided.
-
-To test a maintained scheme file directly:
-
-```bash
-./target/release/calci --colors assets/themes/oxocarbon.toml README.md
-./target/release/calci --colors assets/themes/darkhorizon.toml README.md
-./target/release/calci --colors assets/themes/oxocarbon-base10.toml README.md
-./target/release/calci --colors assets/themes/darkhorizon-base10.toml README.md
-```
-
 ## Notes
 
-- Search ignores code lines by design.
-- `array` follows LaTeX semantics (no implicit delimiters).
-- For `e` to work, open from a file path (not stdin).
-- If `~/.config/calci/colors.toml` exists, it is used automatically.
-- If no colors file exists, calci uses built-in defaults.
-- Inline code renders highlighted text without literal backtick glyphs.
-- Dashboard and status bar are always enabled.
-- `colors.toml` controls color overrides.
+- Search ignores code/math
+- For `e` to work, open from a file path (not stdin)
+- Image decoding/fetching is pager-only and only supported via Kitty terminal

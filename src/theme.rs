@@ -2,17 +2,6 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::ColorsFile;
 
-#[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
-pub enum ThemeName {
-    Oxocarbon,
-    DarkHorizon,
-    Dark,
-    Light,
-    Dracula,
-    SolarizedDark,
-}
-
 #[derive(Clone, Debug)]
 pub struct AppTheme {
     pub syntax_theme: String,
@@ -56,322 +45,80 @@ pub struct CodePalette {
 impl Default for CodePalette {
     fn default() -> Self {
         Self {
-            black: Color::Rgb(27, 27, 27),
-            grey: Color::Rgb(107, 107, 107),
-            white: Color::Rgb(242, 244, 248),
-            purple: Color::Rgb(190, 149, 255),
-            pink: Color::Rgb(199, 209, 255),
-            blue: Color::Rgb(120, 169, 255),
-            cyan: Color::Rgb(130, 207, 255),
-            green: Color::Rgb(41, 211, 152),
-            red: Color::Rgb(238, 83, 150),
-            yellow: Color::Rgb(255, 255, 255),
-            orange: Color::Rgb(182, 194, 255),
+            black: Color::Rgb(42, 47, 56),
+            grey: Color::Rgb(136, 150, 167),
+            white: Color::Rgb(212, 228, 255),
+            purple: Color::Rgb(27, 187, 166),
+            pink: Color::Rgb(151, 138, 255),
+            blue: Color::Rgb(246, 190, 250),
+            cyan: Color::Rgb(116, 168, 251),
+            green: Color::Rgb(151, 138, 255),
+            red: Color::Rgb(234, 121, 242),
+            yellow: Color::Rgb(242, 247, 255),
+            orange: Color::Rgb(163, 198, 255),
         }
     }
 }
 
+impl Default for AppTheme {
+    fn default() -> Self {
+        Self::soapy()
+    }
+}
+
 impl AppTheme {
-    pub fn from_name(name: ThemeName) -> Self {
-        match name {
-            ThemeName::Oxocarbon => Self {
-                syntax_theme: "base16-eighties.dark".to_string(),
-                normal: Style::default().fg(Color::Rgb(242, 244, 248)),
-                heading_h1: Style::default()
-                    .fg(Color::Rgb(190, 149, 255))
-                    .add_modifier(Modifier::BOLD),
-                heading_h2: Style::default()
-                    .fg(Color::Rgb(178, 148, 255))
-                    .add_modifier(Modifier::BOLD),
-                heading_h3: Style::default()
-                    .fg(Color::Rgb(130, 207, 255))
-                    .add_modifier(Modifier::BOLD),
-                heading: Style::default()
-                    .fg(Color::Rgb(178, 148, 255))
-                    .add_modifier(Modifier::BOLD),
-                quote: Style::default()
-                    .fg(Color::Rgb(107, 107, 107))
-                    .add_modifier(Modifier::ITALIC),
-                list_marker: Style::default()
-                    .fg(Color::Rgb(120, 169, 255))
-                    .add_modifier(Modifier::BOLD),
-                inline_code: Style::default()
-                    .fg(Color::Rgb(61, 219, 217))
-                    .bg(Color::Reset),
-                code: Style::default().bg(Color::Reset),
-                link: Style::default()
-                    .fg(Color::Rgb(130, 207, 255))
-                    .add_modifier(Modifier::UNDERLINED),
-                status: Style::default()
-                    .fg(Color::Rgb(242, 244, 248))
-                    .bg(Color::Rgb(36, 36, 36)),
-                status_error: Style::default()
-                    .fg(Color::Rgb(255, 255, 255))
-                    .bg(Color::Rgb(238, 83, 150)),
-                popup_title: Style::default()
-                    .fg(Color::Rgb(190, 149, 255))
-                    .add_modifier(Modifier::BOLD),
-                popup_key: Style::default()
-                    .fg(Color::Rgb(61, 219, 217))
-                    .add_modifier(Modifier::BOLD),
-                popup_hint: Style::default().fg(Color::Rgb(130, 207, 255)),
-                search_hit: Style::default()
-                    .bg(Color::Rgb(182, 194, 255))
-                    .fg(Color::Black),
-                search_current: Style::default()
-                    .bg(Color::Rgb(61, 219, 217))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                cursor_line: Style::default().bg(Color::Rgb(46, 46, 46)),
-                line_number: Style::default().fg(Color::Rgb(107, 107, 107)),
-                code_palette: CodePalette::default(),
-            },
-            ThemeName::DarkHorizon => Self {
-                syntax_theme: "base16-eighties.dark".to_string(),
-                normal: Style::default().fg(Color::Rgb(221, 221, 221)),
-                heading_h1: Style::default()
-                    .fg(Color::Rgb(240, 117, 181))
-                    .add_modifier(Modifier::BOLD),
-                heading_h2: Style::default()
-                    .fg(Color::Rgb(184, 119, 219))
-                    .add_modifier(Modifier::BOLD),
-                heading_h3: Style::default()
-                    .fg(Color::Rgb(63, 196, 222))
-                    .add_modifier(Modifier::BOLD),
-                heading: Style::default()
-                    .fg(Color::Rgb(184, 119, 219))
-                    .add_modifier(Modifier::BOLD),
-                quote: Style::default()
-                    .fg(Color::Rgb(82, 82, 82))
-                    .add_modifier(Modifier::ITALIC),
-                list_marker: Style::default()
-                    .fg(Color::Rgb(63, 196, 222))
-                    .add_modifier(Modifier::BOLD),
-                inline_code: Style::default()
-                    .fg(Color::Rgb(250, 183, 149))
-                    .bg(Color::Reset),
-                code: Style::default().bg(Color::Reset),
-                link: Style::default()
-                    .fg(Color::Rgb(89, 225, 227))
-                    .add_modifier(Modifier::UNDERLINED),
-                status: Style::default()
-                    .fg(Color::Rgb(221, 221, 221))
-                    .bg(Color::Rgb(39, 38, 38)),
-                status_error: Style::default()
-                    .fg(Color::Rgb(255, 255, 255))
-                    .bg(Color::Rgb(233, 86, 120)),
-                popup_title: Style::default()
-                    .fg(Color::Rgb(240, 117, 181))
-                    .add_modifier(Modifier::BOLD),
-                popup_key: Style::default()
-                    .fg(Color::Rgb(63, 196, 222))
-                    .add_modifier(Modifier::BOLD),
-                popup_hint: Style::default().fg(Color::Rgb(89, 225, 227)),
-                search_hit: Style::default()
-                    .bg(Color::Rgb(250, 183, 149))
-                    .fg(Color::Black),
-                search_current: Style::default()
-                    .bg(Color::Rgb(63, 196, 222))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                cursor_line: Style::default().bg(Color::Rgb(43, 43, 43)),
-                line_number: Style::default().fg(Color::Rgb(82, 82, 82)),
-                code_palette: CodePalette::default(),
-            },
-            ThemeName::Light => Self {
-                syntax_theme: "InspiredGitHub".to_string(),
-                normal: Style::default().fg(Color::Black),
-                heading_h1: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                heading_h2: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                heading_h3: Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-                heading: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                quote: Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC),
-                list_marker: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                inline_code: Style::default().fg(Color::Red).bg(Color::Reset),
-                code: Style::default().bg(Color::Reset),
-                link: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::UNDERLINED),
-                status: Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Rgb(220, 220, 220)),
-                status_error: Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Rgb(170, 30, 30)),
-                popup_title: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                popup_key: Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-                popup_hint: Style::default().fg(Color::Blue),
-                search_hit: Style::default().bg(Color::Yellow).fg(Color::Black),
-                search_current: Style::default()
-                    .bg(Color::Rgb(255, 186, 0))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                cursor_line: Style::default().bg(Color::Rgb(230, 240, 255)),
-                line_number: Style::default().fg(Color::DarkGray),
-                code_palette: CodePalette::default(),
-            },
-            ThemeName::Dracula => Self {
-                syntax_theme: "base16-eighties.dark".to_string(),
-                normal: Style::default().fg(Color::Rgb(248, 248, 242)),
-                heading_h1: Style::default()
-                    .fg(Color::Rgb(255, 121, 198))
-                    .add_modifier(Modifier::BOLD),
-                heading_h2: Style::default()
-                    .fg(Color::Rgb(189, 147, 249))
-                    .add_modifier(Modifier::BOLD),
-                heading_h3: Style::default()
-                    .fg(Color::Rgb(139, 233, 253))
-                    .add_modifier(Modifier::BOLD),
-                heading: Style::default()
-                    .fg(Color::Rgb(189, 147, 249))
-                    .add_modifier(Modifier::BOLD),
-                quote: Style::default()
-                    .fg(Color::Rgb(98, 114, 164))
-                    .add_modifier(Modifier::ITALIC),
-                list_marker: Style::default().fg(Color::Rgb(80, 250, 123)),
-                inline_code: Style::default()
-                    .fg(Color::Rgb(255, 184, 108))
-                    .bg(Color::Reset),
-                code: Style::default().bg(Color::Reset),
-                link: Style::default()
-                    .fg(Color::Rgb(139, 233, 253))
-                    .add_modifier(Modifier::UNDERLINED),
-                status: Style::default()
-                    .fg(Color::Rgb(248, 248, 242))
-                    .bg(Color::Rgb(68, 71, 90)),
-                status_error: Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Rgb(255, 85, 85)),
-                popup_title: Style::default()
-                    .fg(Color::Rgb(255, 121, 198))
-                    .add_modifier(Modifier::BOLD),
-                popup_key: Style::default()
-                    .fg(Color::Rgb(139, 233, 253))
-                    .add_modifier(Modifier::BOLD),
-                popup_hint: Style::default().fg(Color::Rgb(80, 250, 123)),
-                search_hit: Style::default()
-                    .bg(Color::Rgb(80, 250, 123))
-                    .fg(Color::Black),
-                search_current: Style::default()
-                    .bg(Color::Rgb(255, 184, 108))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                cursor_line: Style::default().bg(Color::Rgb(56, 58, 75)),
-                line_number: Style::default().fg(Color::Rgb(120, 120, 130)),
-                code_palette: CodePalette::default(),
-            },
-            ThemeName::SolarizedDark => Self {
-                syntax_theme: "Solarized (dark)".to_string(),
-                normal: Style::default().fg(Color::Rgb(131, 148, 150)),
-                heading_h1: Style::default()
-                    .fg(Color::Rgb(211, 54, 130))
-                    .add_modifier(Modifier::BOLD),
-                heading_h2: Style::default()
-                    .fg(Color::Rgb(38, 139, 210))
-                    .add_modifier(Modifier::BOLD),
-                heading_h3: Style::default()
-                    .fg(Color::Rgb(42, 161, 152))
-                    .add_modifier(Modifier::BOLD),
-                heading: Style::default()
-                    .fg(Color::Rgb(38, 139, 210))
-                    .add_modifier(Modifier::BOLD),
-                quote: Style::default()
-                    .fg(Color::Rgb(88, 110, 117))
-                    .add_modifier(Modifier::ITALIC),
-                list_marker: Style::default().fg(Color::Rgb(42, 161, 152)),
-                inline_code: Style::default()
-                    .fg(Color::Rgb(220, 50, 47))
-                    .bg(Color::Reset),
-                code: Style::default().bg(Color::Reset),
-                link: Style::default()
-                    .fg(Color::Rgb(181, 137, 0))
-                    .add_modifier(Modifier::UNDERLINED),
-                status: Style::default()
-                    .fg(Color::Rgb(131, 148, 150))
-                    .bg(Color::Rgb(0, 43, 54)),
-                status_error: Style::default()
-                    .fg(Color::Rgb(253, 246, 227))
-                    .bg(Color::Rgb(220, 50, 47)),
-                popup_title: Style::default()
-                    .fg(Color::Rgb(38, 139, 210))
-                    .add_modifier(Modifier::BOLD),
-                popup_key: Style::default()
-                    .fg(Color::Rgb(181, 137, 0))
-                    .add_modifier(Modifier::BOLD),
-                popup_hint: Style::default().fg(Color::Rgb(42, 161, 152)),
-                search_hit: Style::default()
-                    .bg(Color::Rgb(181, 137, 0))
-                    .fg(Color::Black),
-                search_current: Style::default()
-                    .bg(Color::Rgb(38, 139, 210))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                cursor_line: Style::default().bg(Color::Rgb(12, 62, 74)),
-                line_number: Style::default().fg(Color::Rgb(88, 110, 117)),
-                code_palette: CodePalette::default(),
-            },
-            ThemeName::Dark => Self {
-                syntax_theme: "Solarized (dark)".to_string(),
-                normal: Style::default().fg(Color::Gray),
-                heading_h1: Style::default()
-                    .fg(Color::LightMagenta)
-                    .add_modifier(Modifier::BOLD),
-                heading_h2: Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-                heading_h3: Style::default()
-                    .fg(Color::LightBlue)
-                    .add_modifier(Modifier::BOLD),
-                heading: Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-                quote: Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC),
-                list_marker: Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                inline_code: Style::default().fg(Color::Yellow).bg(Color::Reset),
-                code: Style::default().bg(Color::Reset),
-                link: Style::default()
-                    .fg(Color::LightBlue)
-                    .add_modifier(Modifier::UNDERLINED),
-                status: Style::default().fg(Color::White).bg(Color::Rgb(40, 40, 40)),
-                status_error: Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Rgb(150, 40, 40)),
-                popup_title: Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-                popup_key: Style::default()
-                    .fg(Color::LightBlue)
-                    .add_modifier(Modifier::BOLD),
-                popup_hint: Style::default().fg(Color::Yellow),
-                search_hit: Style::default().bg(Color::Yellow).fg(Color::Black),
-                search_current: Style::default()
-                    .bg(Color::LightBlue)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                cursor_line: Style::default().bg(Color::Rgb(45, 45, 45)),
-                line_number: Style::default().fg(Color::DarkGray),
-                code_palette: CodePalette::default(),
-            },
+    pub fn soapy() -> Self {
+        Self {
+            syntax_theme: "base16-eighties.dark".to_string(),
+            normal: Style::default().fg(Color::Rgb(212, 228, 255)),
+            heading_h1: Style::default()
+                .fg(Color::Rgb(151, 138, 255))
+                .add_modifier(Modifier::BOLD),
+            heading_h2: Style::default()
+                .fg(Color::Rgb(151, 138, 255))
+                .add_modifier(Modifier::BOLD),
+            heading_h3: Style::default()
+                .fg(Color::Rgb(246, 190, 250))
+                .add_modifier(Modifier::BOLD),
+            heading: Style::default()
+                .fg(Color::Rgb(151, 138, 255))
+                .add_modifier(Modifier::BOLD),
+            quote: Style::default()
+                .fg(Color::Rgb(136, 150, 167))
+                .add_modifier(Modifier::ITALIC),
+            list_marker: Style::default()
+                .fg(Color::Rgb(246, 190, 250))
+                .add_modifier(Modifier::BOLD),
+            inline_code: Style::default()
+                .fg(Color::Rgb(27, 187, 166))
+                .bg(Color::Reset),
+            code: Style::default().bg(Color::Reset),
+            link: Style::default()
+                .fg(Color::Rgb(116, 168, 251))
+                .add_modifier(Modifier::UNDERLINED),
+            status: Style::default()
+                .fg(Color::Rgb(212, 228, 255))
+                .bg(Color::Rgb(38, 42, 40)),
+            status_error: Style::default()
+                .fg(Color::Rgb(242, 247, 255))
+                .bg(Color::Rgb(234, 121, 242)),
+            popup_title: Style::default()
+                .fg(Color::Rgb(151, 138, 255))
+                .add_modifier(Modifier::BOLD),
+            popup_key: Style::default()
+                .fg(Color::Rgb(27, 187, 166))
+                .add_modifier(Modifier::BOLD),
+            popup_hint: Style::default().fg(Color::Rgb(116, 168, 251)),
+            search_hit: Style::default()
+                .bg(Color::Rgb(151, 138, 255))
+                .fg(Color::Rgb(42, 47, 56)),
+            search_current: Style::default()
+                .bg(Color::Rgb(27, 187, 166))
+                .fg(Color::Rgb(42, 47, 56))
+                .add_modifier(Modifier::BOLD),
+            cursor_line: Style::default().bg(Color::Rgb(99, 112, 138)),
+            line_number: Style::default().fg(Color::Rgb(136, 150, 167)),
+            code_palette: CodePalette::default(),
         }
     }
 
