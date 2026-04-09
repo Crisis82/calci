@@ -22,6 +22,7 @@ const BLOCK_PAD_X: usize = 2;
 const BLOCK_PAD_TOP: usize = 1;
 const BLOCK_PAD_BOTTOM: usize = 1;
 const BLOCK_TITLE_GAP: usize = 1;
+const LIST_PAD_X: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineKind {
@@ -429,7 +430,9 @@ pub fn render_markdown(
     options.insert(Options::ENABLE_FOOTNOTES);
     options.insert(Options::ENABLE_MATH);
 
-    let mut parser = Parser::new_ext(&markdown, options).peekable();
+    let mut parser = Parser::new_ext(&markdown, options)
+        .into_offset_iter()
+        .peekable();
     let syntax_set = SyntaxSet::load_defaults_newlines();
     let syntax_theme = exact_semantic_theme(&settings.theme);
 
@@ -446,8 +449,28 @@ pub fn render_markdown(
     let mut current_line_links: Vec<LinkRange> = Vec::new();
     let mut active_mods = Modifier::empty();
     let mut smart_quote_state = SmartQuoteState::default();
+    let mut pending_paragraph_end: Option<usize> = None;
 
-    while let Some(event) = parser.next() {
+    while let Some((event, event_range)) = parser.next() {
+        if let Some(paragraph_end) = pending_paragraph_end.take() {
+            let blank_rows = if matches!(event, Event::Start(Tag::List(_))) && list_stack.is_empty()
+            {
+                blank_rows_between_offsets(&markdown, paragraph_end, event_range.start)
+            } else {
+                1
+            };
+            for _ in 0..blank_rows {
+                doc.lines.push(RenderLine {
+                    line: Line::from(""),
+                    kind: LineKind::Normal,
+                    link_url: None,
+                    link_ranges: vec![],
+                    code_block_index: None,
+                    image_index: None,
+                    heading_level: None,
+                });
+            }
+        }
         if let Some(tbl) = table.as_mut() {
             match event {
                 Event::Start(Tag::TableHead) => {
@@ -585,7 +608,11 @@ pub fn render_markdown(
                             current_line_kind(quote_depth),
                         );
                     }
-                    let indent = "  ".repeat(list_stack.len().saturating_sub(1));
+                    let indent = format!(
+                        "{}{}",
+                        " ".repeat(LIST_PAD_X),
+                        "  ".repeat(list_stack.len().saturating_sub(1))
+                    );
                     let marker = if let Some(last) = list_stack.last_mut() {
                         if last.ordered {
                             let m = format!("{}. ", last.next);
@@ -598,9 +625,7 @@ pub fn render_markdown(
                         "• ".to_string()
                     };
                     current_line.push(Span::styled(marker, settings.theme.list_marker));
-                    if !indent.is_empty() {
-                        current_line.insert(0, Span::raw(indent));
-                    }
+                    current_line.insert(0, Span::raw(indent));
                 }
                 Tag::Link { dest_url, .. } => {
                     pending_link = Some(dest_url.to_string());
@@ -766,15 +791,7 @@ pub fn render_markdown(
                         );
                     }
                     if list_stack.is_empty() {
-                        doc.lines.push(RenderLine {
-                            line: Line::from(""),
-                            kind: LineKind::Normal,
-                            link_url: None,
-                            link_ranges: vec![],
-                            code_block_index: None,
-                            image_index: None,
-                            heading_level: None,
-                        });
+                        pending_paragraph_end = Some(event_range.end);
                     }
                 }
                 TagEnd::Link => {
@@ -1421,16 +1438,24 @@ fn parse_image_width_percent_attr(text: &str) -> Option<u8> {
 
 fn consume_trailing_image_width_attr<'a, I>(parser: &mut std::iter::Peekable<I>) -> Option<u8>
 where
-    I: Iterator<Item = Event<'a>>,
+    I: Iterator<Item = (Event<'a>, std::ops::Range<usize>)>,
 {
     let width = match parser.peek() {
-        Some(Event::Text(text)) => parse_image_width_percent_attr(text),
+        Some((Event::Text(text), _)) => parse_image_width_percent_attr(text),
         _ => None,
     };
     if width.is_some() {
         let _ = parser.next();
     }
     width
+}
+
+fn blank_rows_between_offsets(source: &str, start: usize, end: usize) -> usize {
+    if end <= start || start >= source.len() {
+        return 0;
+    }
+    let end = end.min(source.len());
+    source[start..end].chars().filter(|ch| *ch == '\n').count()
 }
 
 fn render_escaped_inline_math_in_code(code: &str) -> String {
@@ -2525,16 +2550,22 @@ mod tests {
         let bullet_lines = doc
             .lines
             .iter()
-            .filter(|l| {
-                l.line
+            .filter_map(|l| {
+                let text = l
+                    .line
                     .spans
                     .iter()
                     .map(|s| s.content.as_ref())
-                    .collect::<String>()
-                    .starts_with("• ")
+                    .collect::<String>();
+                if text.trim_start().starts_with("• ") {
+                    Some(text)
+                } else {
+                    None
+                }
             })
-            .count();
-        assert_eq!(bullet_lines, 2);
+            .collect::<Vec<_>>();
+        assert_eq!(bullet_lines.len(), 2);
+        assert!(bullet_lines.iter().all(|line| line.starts_with("  • ")));
     }
 
     #[test]
@@ -2554,7 +2585,13 @@ mod tests {
         let bullet_positions = lines
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| if s.starts_with("• ") { Some(i) } else { None })
+            .filter_map(|(i, s)| {
+                if s.trim_start().starts_with("• ") {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
         assert_eq!(bullet_positions.len(), 2);
         let first = bullet_positions[0];
@@ -2566,8 +2603,76 @@ mod tests {
         assert!(
             !lines[first..=last]
                 .iter()
-                .any(|l| l.trim().is_empty() && !l.starts_with("• "))
+                .any(|l| l.trim().is_empty() && !l.trim_start().starts_with("• "))
         );
+    }
+
+    #[test]
+    fn list_immediately_after_paragraph_has_no_gap() {
+        let doc = render_markdown("before\n- a", &settings()).expect("render");
+        let lines = doc
+            .lines
+            .iter()
+            .map(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let bullet_idx = lines
+            .iter()
+            .position(|s| s.trim_start().starts_with("• "))
+            .expect("list item");
+        assert!(bullet_idx > 0);
+        assert_eq!(lines[bullet_idx - 1].trim(), "before");
+    }
+
+    #[test]
+    fn list_gap_matches_multiple_blank_lines() {
+        let doc = render_markdown("before\n\n\n- a", &settings()).expect("render");
+        let lines = doc
+            .lines
+            .iter()
+            .map(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let bullet_idx = lines
+            .iter()
+            .position(|s| s.trim_start().starts_with("• "))
+            .expect("list item");
+        assert!(bullet_idx >= 3);
+        assert_eq!(lines[bullet_idx - 1].trim(), "");
+        assert_eq!(lines[bullet_idx - 2].trim(), "");
+        assert_eq!(lines[bullet_idx - 3].trim(), "before");
+    }
+
+    #[test]
+    fn list_preserves_gap_after_previous_paragraph() {
+        let doc = render_markdown("before\n\n- a", &settings()).expect("render");
+        let lines = doc
+            .lines
+            .iter()
+            .map(|l| {
+                l.line
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let bullet_idx = lines
+            .iter()
+            .position(|s| s.trim_start().starts_with("• "))
+            .expect("list item");
+        assert!(bullet_idx > 0);
+        assert_eq!(lines[bullet_idx - 1].trim(), "");
     }
 
     #[test]
