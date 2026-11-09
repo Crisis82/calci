@@ -10,6 +10,18 @@ wrap = true
 smooth_scroll = 3
 center_blocks = true
 link_confirmation = false
+remote_images = false
+# "never" (default), "wrapped" (only tables with multi-line rows) or "always"
+table_row_separator = "never"
+# let `x` / clicking a task checkbox write [ ] <-> [x] back to the file
+checkbox_toggle = false
+# draw ## headings at 2x size (kitty 0.40+ only; ignored in other terminals)
+heading_scale = false
+# math font: "katex" (default, KaTeX fonts via RaTeX) or an OpenType math
+# font rendered with Typst: "fira", "lete_sans", "newcm_sans", "kpmath_sans".
+# A formula Typst can't render falls back to the KaTeX fonts (RaTeX), and to
+# its LaTeX source only if that fails too.
+math_font = "katex"
 
 [dashboard]
 sort = "last_open"

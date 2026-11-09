@@ -1,6 +1,6 @@
 # calci
 
-Rust TUI markdown pager inspired by [Glow](https://github.com/charmbracelet/glow) and heavily modified on my personal needs that integrates math rendering via [Calcifer](https://github.com/Crisis82/calcifer).
+Rust TUI markdown pager inspired by [Glow](https://github.com/charmbracelet/glow) and heavily modified on my personal needs with LaTeX math rendering via [RaTeX](https://crates.io/crates/ratex-render).
 
 ![pager first image](./assets/screenshots/pager1.png)
 ![pager second image](./assets/screenshots/pager2.png "Pager")
@@ -13,17 +13,17 @@ Rust TUI markdown pager inspired by [Glow](https://github.com/charmbracelet/glow
 - Text/File search (`/`, `n`, `N`)
 - Direct editing (`e`) and reload (`r`)
 - Configurable behavior via `config.toml` and colors via `color.toml`
-- Jekyll-like front matter header (`--- title: ... ---`) with sticky top title
+- Sticky title and distinct heading levels
 - Code block rendering with syntax highlighting and title support
-- Math rendering through `calcifer` (`$...$`, `$$...$$`)
-- Images rendering via Kitty graphics protocol with width support
-- Math support in code blocks via escaped markers `\$...\$`
-- Copy entire code block to clipboard with `y` or mouse click
-- Link opening with `o` or mouse click (optional confirmation popup)
-- Centered tables and ASCII drawings
-- Markdown formatting support: headings, bold, italic, strikethrough, links, block quotes, lists, code fences, tables
+- LaTeX math (`$...$`, `$$...$$`, `math`/`latex` code blocks) drawn as images in kitty, with math font set with `math_font`.
+- Images rendering via Kitty graphics protocol with width support, loaded in the background (remote images opt-in)
+- Copy entire code block to clipboard with `y` or mouse click, and inline `code` with a click
+- Link opening with `o` or mouse click
+- Task lists with checkbox icons that can be toggled with `x` or a click (`checkbox_toggle`)
+- Markdown formatting support
 - Typographic smart quotes
 - Toggable mouse mode to allow text selection
+- Hover feedback: link URL / copy / toggle hints in the status bar
 
 ## Build
 
@@ -61,6 +61,11 @@ Defaults:
 - `dashboard_fuzzy_mode = "loose"` (default) or `"strict"`
 - `dashboard_show_edited_age = false` (default)
 - `mouse = true` enables dashboard click + wheel gestures and pager mouse actions by default
+- `remote_images = false` (default): `http(s)` images are not fetched and show a clickable `[file-name]` placeholder; when `true` they are fetched with a 5s timeout and a 20 MB size cap
+- `table_row_separator = "never"` (default), `"wrapped"` (separator lines between body rows only in tables where a row wraps) or `"always"`; tables always shrink to the window width, wrapping cell text as needed
+- `checkbox_toggle = false` (default): when `true`, `x` or clicking a task checkbox rewrites `[ ]` ↔ `[x]` in the file (refused if the file changed on disk since it was loaded); checkboxes use Nerd Font glyphs
+- `heading_scale = false` (default): when `true` and running in kitty 0.40+, `##` headings are drawn at 2x size (text sizing protocol); elsewhere headings are styled only
+- `link_confirmation = false` (default): `http`, `https` and `mailto` links open directly; any other scheme or relative path always asks for confirmation
 - dashboard hotkey `s` toggles sort mode (`last_open`/`last_edited`) at runtime
 
 ## Keybindings
@@ -77,6 +82,7 @@ Defaults:
 - `e`: open editor (`$EDITOR`, default `vi`)
 - `r`: reload content
 - `m`: toggle selection mode (off by default)
+- `x` / click on a task checkbox: toggle `[ ]` ↔ `[x]` in the file (requires `checkbox_toggle = true`)
 - `?`: keybindings popup
 
 ### Dashboard search modes
@@ -97,5 +103,4 @@ For explicit overrides, the following sections can be adjusted:
 ## Notes
 
 - Search ignores code/math
-- For `e` to work, open from a file path (not stdin)
-- Image decoding/fetching is pager-only and only supported via Kitty terminal
+- Image decoding/fetching is pager-only and needs a terminal with the kitty graphics protocol (kitty, Ghostty); elsewhere the alt text is shown

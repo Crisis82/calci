@@ -4,11 +4,13 @@ use crate::config::ColorsFile;
 
 #[derive(Clone, Debug)]
 pub struct AppTheme {
-    pub syntax_theme: String,
     pub normal: Style,
     pub heading_h1: Style,
     pub heading_h2: Style,
     pub heading_h3: Style,
+    pub heading_h4: Style,
+    /// H5 and H6.
+    pub heading_h5: Style,
     pub heading: Style,
     pub quote: Style,
     pub list_marker: Style,
@@ -69,7 +71,6 @@ impl Default for AppTheme {
 impl AppTheme {
     pub fn soapy() -> Self {
         Self {
-            syntax_theme: "base16-eighties.dark".to_string(),
             normal: Style::default().fg(Color::Rgb(212, 228, 255)),
             heading_h1: Style::default()
                 .fg(Color::Rgb(151, 138, 255))
@@ -80,6 +81,12 @@ impl AppTheme {
             heading_h3: Style::default()
                 .fg(Color::Rgb(246, 190, 250))
                 .add_modifier(Modifier::BOLD),
+            heading_h4: Style::default()
+                .fg(Color::Rgb(212, 228, 255))
+                .add_modifier(Modifier::BOLD),
+            heading_h5: Style::default()
+                .fg(Color::Rgb(136, 150, 167))
+                .add_modifier(Modifier::ITALIC),
             heading: Style::default()
                 .fg(Color::Rgb(151, 138, 255))
                 .add_modifier(Modifier::BOLD),
@@ -201,7 +208,6 @@ impl AppTheme {
         if colors_has_any(c) {
             derive_theme_from_palette(self);
         }
-        self.syntax_theme = syntect_theme_for_theme(self);
     }
 }
 
@@ -258,6 +264,8 @@ fn derive_theme_from_palette(t: &mut AppTheme) {
     t.heading_h3 = Style::default()
         .fg(t.code_palette.blue)
         .add_modifier(Modifier::BOLD);
+    t.heading_h4 = Style::default().fg(normal_fg).add_modifier(Modifier::BOLD);
+    t.heading_h5 = Style::default().fg(quote_fg).add_modifier(Modifier::ITALIC);
     t.quote = Style::default().fg(quote_fg).add_modifier(Modifier::ITALIC);
     t.list_marker = Style::default().fg(list_fg).add_modifier(Modifier::BOLD);
     t.inline_code = Style::default().fg(inline_fg).bg(Color::Reset);
@@ -288,56 +296,15 @@ fn derive_theme_from_palette(t: &mut AppTheme) {
     t.line_number = Style::default().fg(line_fg);
 }
 
-fn syntect_theme_for_theme(t: &AppTheme) -> String {
-    let bg = t.code.bg.or(t.status.bg).unwrap_or(Color::Black);
-    let lightness = color_luma(bg);
-    if lightness < 120 {
-        if is_dark_syntect_theme_name(&t.syntax_theme) {
-            t.syntax_theme.clone()
-        } else {
-            "base16-eighties.dark".to_string()
-        }
-    } else {
-        "InspiredGitHub".to_string()
-    }
-}
-
-fn is_dark_syntect_theme_name(name: &str) -> bool {
-    !name.eq_ignore_ascii_case("InspiredGitHub")
-}
-
-fn color_luma(c: Color) -> u16 {
-    match c {
-        Color::Rgb(r, g, b) => ((r as u16 * 3) + (g as u16 * 6) + (b as u16)) / 10,
-        Color::Black => 0,
-        Color::DarkGray => 64,
-        Color::Gray => 190,
-        Color::White => 255,
-        Color::Red => 76,
-        Color::Green => 150,
-        Color::Blue => 29,
-        Color::Yellow => 226,
-        Color::Magenta => 105,
-        Color::Cyan => 178,
-        Color::LightRed => 140,
-        Color::LightGreen => 200,
-        Color::LightBlue => 120,
-        Color::LightYellow => 240,
-        Color::LightMagenta => 170,
-        Color::LightCyan => 210,
-        _ => 128,
-    }
-}
-
 fn parse_color(s: &str) -> Option<Color> {
     let t = s.trim();
-    if let Some(hex) = t.strip_prefix('#') {
-        if hex.len() == 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            return Some(Color::Rgb(r, g, b));
-        }
+    if let Some(hex) = t.strip_prefix('#')
+        && hex.len() == 6
+    {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        return Some(Color::Rgb(r, g, b));
     }
     match t.to_ascii_lowercase().as_str() {
         "black" => Some(Color::Black),

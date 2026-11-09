@@ -14,6 +14,34 @@ pub enum DashboardSort {
     LastEdited,
 }
 
+/// When to draw a separator line between table body rows.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TableRowSeparator {
+    #[default]
+    Never,
+    /// Only in tables where at least one row wraps onto several lines.
+    Wrapped,
+    Always,
+}
+
+/// Math font. `katex` (default) renders with RaTeX and the KaTeX fonts; the
+/// others are OpenType math fonts rendered with Typst + mitex.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash, Default)]
+pub enum MathFont {
+    #[default]
+    #[serde(rename = "katex")]
+    Katex,
+    #[serde(rename = "fira")]
+    Fira,
+    #[serde(rename = "newcm_sans")]
+    NewCmSans,
+    #[serde(rename = "kpmath_sans")]
+    KpMathSans,
+    #[serde(rename = "lete_sans")]
+    LeteSans,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DashboardFuzzyMode {
@@ -34,6 +62,11 @@ pub struct AppConfigFile {
     pub smooth_scroll: usize,
     pub center_blocks: bool,
     pub link_confirmation: bool,
+    pub remote_images: bool,
+    pub table_row_separator: TableRowSeparator,
+    pub checkbox_toggle: bool,
+    pub heading_scale: bool,
+    pub math_font: MathFont,
     pub dashboard_sort: DashboardSort,
     pub dashboard_fuzzy_mode: DashboardFuzzyMode,
     pub dashboard_show_edited_age: bool,
@@ -51,6 +84,11 @@ impl Default for AppConfigFile {
             smooth_scroll: 3,
             center_blocks: true,
             link_confirmation: false,
+            remote_images: false,
+            table_row_separator: TableRowSeparator::Never,
+            checkbox_toggle: false,
+            heading_scale: false,
+            math_font: MathFont::Katex,
             dashboard_sort: DashboardSort::LastOpen,
             dashboard_fuzzy_mode: DashboardFuzzyMode::Loose,
             dashboard_show_edited_age: false,
@@ -78,6 +116,11 @@ struct RawAppConfigFile {
     smooth_scroll: Option<usize>,
     center_blocks: Option<bool>,
     link_confirmation: Option<bool>,
+    remote_images: Option<bool>,
+    table_row_separator: Option<TableRowSeparator>,
+    checkbox_toggle: Option<bool>,
+    heading_scale: Option<bool>,
+    math_font: Option<MathFont>,
     dashboard_sort: Option<DashboardSort>,
     dashboard_fuzzy_mode: Option<DashboardFuzzyMode>,
     dashboard_show_edited_age: Option<bool>,
@@ -114,6 +157,21 @@ impl RawAppConfigFile {
         if let Some(v) = self.link_confirmation {
             out.link_confirmation = v;
         }
+        if let Some(v) = self.remote_images {
+            out.remote_images = v;
+        }
+        if let Some(v) = self.table_row_separator {
+            out.table_row_separator = v;
+        }
+        if let Some(v) = self.checkbox_toggle {
+            out.checkbox_toggle = v;
+        }
+        if let Some(v) = self.heading_scale {
+            out.heading_scale = v;
+        }
+        if let Some(v) = self.math_font {
+            out.math_font = v;
+        }
         if let Some(d) = self.dashboard {
             if let Some(v) = d.sort {
                 out.dashboard_sort = v;
@@ -140,6 +198,7 @@ impl RawAppConfigFile {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ColorsFile {
     pub normal_fg: Option<String>,
     pub heading_fg: Option<String>,
@@ -166,38 +225,6 @@ pub struct ColorsFile {
     pub code_red: Option<String>,
     pub code_yellow: Option<String>,
     pub code_orange: Option<String>,
-}
-
-impl Default for ColorsFile {
-    fn default() -> Self {
-        Self {
-            normal_fg: None,
-            heading_fg: None,
-            quote_fg: None,
-            list_marker_fg: None,
-            inline_code_fg: None,
-            link_fg: None,
-            status_fg: None,
-            status_bg: None,
-            search_hit_fg: None,
-            search_hit_bg: None,
-            search_current_fg: None,
-            search_current_bg: None,
-            cursor_line_bg: None,
-            line_number_fg: None,
-            code_black: None,
-            code_grey: None,
-            code_white: None,
-            code_purple: None,
-            code_pink: None,
-            code_blue: None,
-            code_cyan: None,
-            code_green: None,
-            code_red: None,
-            code_yellow: None,
-            code_orange: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -528,6 +555,26 @@ heading = "#FF00FF"
         assert_eq!(loaded.app.dashboard_fuzzy_mode, DashboardFuzzyMode::Strict);
         assert!(loaded.app.dashboard_show_edited_age);
         assert_eq!(loaded.colors.heading_fg.as_deref(), Some("#FF00FF"));
+        assert_eq!(loaded.app.math_font, MathFont::Katex, "default");
+    }
+
+    #[test]
+    fn math_font_selects_renderer_font() {
+        let d = tempdir().expect("tempdir");
+        let clr = d.path().join("color.toml");
+        fs::write(&clr, "").expect("write clr");
+        for (value, font) in [
+            ("katex", MathFont::Katex),
+            ("fira", MathFont::Fira),
+            ("lete_sans", MathFont::LeteSans),
+            ("newcm_sans", MathFont::NewCmSans),
+            ("kpmath_sans", MathFont::KpMathSans),
+        ] {
+            let cfg = d.path().join(format!("{value}.toml"));
+            fs::write(&cfg, format!("math_font = \"{value}\"\n")).expect("write cfg");
+            let loaded = LoadedConfig::load(Some(&cfg), Some(&clr)).expect("load");
+            assert_eq!(loaded.app.math_font, font);
+        }
     }
 
     #[test]
