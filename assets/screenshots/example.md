@@ -2,11 +2,13 @@
 title: "Title example"
 ---
 
-# Intro
-
 This is a simple **example** of how _things_ are rendered:
 - first elem followed by inline math $F(x) = \alpha \cdot x^2 - 3 \mod p$ with $x \in \mathbb{R}$
 - second elem with some `code`
+
+Now we write a checklist:
+- [ ] First element
+- [x] Second done
 
 ## Section
 
@@ -28,7 +30,7 @@ y = super(2) # equals 3
 | 2 | 6 |
 | 3 | 7 |
 
-# Conclusions
+### Subsection
 
 Doing some math
 $$
